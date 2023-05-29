@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 fn main() {
     let args = CliArgs::parse();
 
-    let distr = Arc::new(RwLock::new(HashMap::new()));
+    let distr = RwLock::new(HashMap::new());
     let handler: Arc<dyn Fn(TcpStream) + Send + Sync + 'static> = Arc::new(move |tcpstream| {
         handle_stream(tcpstream, &distr);
     });
@@ -15,7 +15,7 @@ fn main() {
     Server::new(args.port, args.max_connections).serve(handler);
 }
 
-fn handle_stream(mut stream: TcpStream, distr: &Arc<RwLock<HashMap<usize, u32>>>) {
+fn handle_stream(mut stream: TcpStream, distr: &RwLock<HashMap<usize, u32>>) {
     let mut buf = [0; 1024];
     loop {
         let size = stream.read(&mut buf).unwrap();
@@ -25,7 +25,7 @@ fn handle_stream(mut stream: TcpStream, distr: &Arc<RwLock<HashMap<usize, u32>>>
             println!("connection closed");
             return;
         }
-        println!("read {size} bytes");
+        println!("{:?}", distr);
         stream.write_all(&buf[..size]).unwrap();
     }
 }

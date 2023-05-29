@@ -41,17 +41,20 @@ impl Server {
 
         let mut join_handles = VecDeque::new();
 
-        for stream in listener.incoming() {
+        for tcp_stream in listener.incoming() {
             while join_handles.len() >= self.max_connections as usize {
                 let top_thread: JoinHandle<()> = join_handles.pop_front().unwrap();
                 top_thread.join().unwrap();
             }
 
-            match stream {
-                Ok(stream) => {
+            match tcp_stream {
+                Ok(tcp_stream) => {
                     let handler = Arc::clone(&handler);
-                    println!("handling connection from: {}", stream.peer_addr().unwrap());
-                    join_handles.push_back(thread::spawn(move || (handler)(stream)));
+                    println!(
+                        "handling connection from: {}",
+                        tcp_stream.peer_addr().unwrap()
+                    );
+                    join_handles.push_back(thread::spawn(move || (handler)(tcp_stream)));
                 }
                 Err(err) => {
                     println!("Connection failed: {:?}", err);
