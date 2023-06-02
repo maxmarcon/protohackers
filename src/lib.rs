@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
-use std::thread::JoinHandle;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -16,7 +15,7 @@ pub struct CliArgs {
     #[arg(
         short = 'c',
         long,
-        help = "Max concurrent connections",
+        help = "Serve at most these many connections",
         default_value_t = 5
     )]
     pub max_connections: u16,
@@ -42,11 +41,6 @@ impl Server {
         let mut join_handles = VecDeque::new();
 
         for tcp_stream in listener.incoming() {
-            while join_handles.len() >= self.max_connections as usize {
-                let top_thread: JoinHandle<()> = join_handles.pop_front().unwrap();
-                top_thread.join().unwrap();
-            }
-
             match tcp_stream {
                 Ok(tcp_stream) => {
                     let handler = Arc::clone(&handler);
@@ -57,9 +51,17 @@ impl Server {
                     join_handles.push_back(thread::spawn(move || (handler)(tcp_stream)));
                 }
                 Err(err) => {
-                    println!("Connection failed: {:?}", err);
+                    println!("connection failed: {:?}", err);
                 }
             }
+            if join_handles.len() >= self.max_connections as usize {
+                println!("maximum number of connections reached ({}) - waiting for existing connections to be closed", self.max_connections);
+                break;
+            }
         }
+
+        join_handles
+            .into_iter()
+            .for_each(|join_handle| join_handle.join().unwrap())
     }
 }
