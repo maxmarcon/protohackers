@@ -17,7 +17,8 @@ fn main() {
 
     Server::new(args.port, args.max_connections).serve(handler);
 
-    println!("received a total of {} bytes", byte_count.lock().unwrap());
+    let byte_count = Arc::into_inner(byte_count).unwrap().into_inner().unwrap();
+    println!("received a total of {} bytes", byte_count);
 }
 
 fn handle_stream(mut stream: TcpStream, byte_count: &Arc<Mutex<u32>>) {
