@@ -15,29 +15,34 @@ fn main() {
     Server::new(args.port, args.max_connections).serve(handler);
 }
 
-const READ_SIZE: usize = 1024;
+const READ_CHUNK: usize = 256;
 
 fn handle_stream(mut tcpstream: TcpStream) {
-    let mut buffer = vec![0; READ_SIZE];
-    let mut last = 0;
+    let mut buffer = vec![0; READ_CHUNK];
+    let mut write_from = 0;
 
     loop {
-        if tcpstream.read(&mut buffer[last..]).unwrap() == 0 {
+        let read = tcpstream.read(&mut buffer[write_from..]).unwrap();
+        if read == 0 {
             break;
         }
-
-        match read_json_object(&buffer) {
-            Ok((Some(json), _pos)) => {
-                println!("got json {json:?}");
-                buffer = vec![0; READ_SIZE];
-                last = 0;
+        
+        write_from += read;
+        match read_json_object(&buffer[0..write_from]) {
+            Ok((Some(json), pos)) => {
+                write_from = 0;
+                buffer.drain(0..pos);
+                if buffer.is_empty() {
+                    buffer.append(&mut vec![0_u8; READ_CHUNK]);
+                }
             }
-            Ok((None, pos)) => {
-                last = pos;
-                buffer.append(&mut vec![0_u8; READ_SIZE]);
+            Ok((None, _pos)) => {
+                if write_from == buffer.len() {
+                    buffer.append(&mut vec![0_u8; READ_CHUNK]);
+                }
             }
-            Err(_) => {
-                tcpstream.write_all(b"whats up?\n").unwrap();
+            Err(e) => {
+                tcpstream.write_all(format!("{e:?}").as_bytes()).unwrap();
                 break;
             }
         }
@@ -46,6 +51,7 @@ fn handle_stream(mut tcpstream: TcpStream) {
 
 type JsonMap = serde_json::Map<String, serde_json::Value>;
 
+#[derive(Debug)]
 enum DecodeError {
     Serde(serde_json::Error),
     UnbalancedBrackets,
