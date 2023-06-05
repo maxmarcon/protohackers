@@ -26,7 +26,7 @@ fn main() {
         })
     };
 
-    Server::new(args.port).serve(handler);
+    Server::new(args.port, args.max_connections).serve(handler);
 }
 
 const READ_CHUNK: usize = 256;
