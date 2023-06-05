@@ -11,27 +11,15 @@ pub struct CliArgs {
     /// Port to listen to
     #[arg(short, long, help = "Port to listen to", default_value_t = 33333)]
     pub port: u16,
-
-    #[arg(
-        short = 'c',
-        long,
-        help = "Serve at most these many connections",
-        default_value_t = 5
-    )]
-    pub max_connections: u16,
 }
 
 pub struct Server {
     port: u16,
-    max_connections: u16,
 }
 
 impl Server {
-    pub fn new(port: u16, max_connections: u16) -> Self {
-        Self {
-            port,
-            max_connections,
-        }
+    pub fn new(port: u16) -> Self {
+        Self { port }
     }
 
     pub fn serve(&self, handler: Arc<dyn Fn(TcpStream) + Send + Sync>) {
@@ -54,14 +42,6 @@ impl Server {
                     println!("connection failed: {:?}", err);
                 }
             }
-            if join_handles.len() >= self.max_connections as usize {
-                println!("maximum number of connections reached ({}) - waiting for existing connections to be closed", self.max_connections);
-                break;
-            }
         }
-
-        join_handles
-            .into_iter()
-            .for_each(|join_handle| join_handle.join().unwrap())
     }
 }
