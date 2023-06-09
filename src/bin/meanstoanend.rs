@@ -71,12 +71,18 @@ fn handle_stream(mut tcpstream: TcpStream) {
 
     loop {
         let read = tcpstream.read(&mut buf[write_from..]).unwrap();
+        if read == 0 {
+            break;
+        }
         write_from += read;
 
         while write_from >= 9 {
             let message = match parse_message(&buf[..9]) {
                 Ok(message) => message,
-                Err(()) => return,
+                Err(()) => {
+                    tcpstream.write_all(&[0]).unwrap();
+                    return;
+                }
             };
 
             match message {
@@ -92,7 +98,7 @@ fn handle_stream(mut tcpstream: TcpStream) {
             buf.drain(..9);
             write_from -= 9;
         }
-        
+
         if buf.is_empty() {
             buf = Vec::from([0; BUFFER_SIZE]);
         }
@@ -122,6 +128,6 @@ fn get_mean_price(prices: &BTreeMap<i32, i32>, mints: i32, maxts: i32) -> i32 {
     if cnt == 0 {
         0
     } else {
-        (sum as i32) / cnt
+        (sum / cnt) as i32
     }
 }
