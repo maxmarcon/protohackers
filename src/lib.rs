@@ -1,6 +1,7 @@
 pub use clap::Parser;
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::thread;
 
@@ -38,9 +39,10 @@ impl Server {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port)).unwrap();
         println!("listening on: {:?}", listener.local_addr().unwrap());
 
-        let mut join_handles = VecDeque::new();
+        let mut join_handles = HashMap::new();
 
-        for tcp_stream in listener.incoming() {
+        let (sender, receiver) = channel();
+        for (thread_id, tcp_stream) in listener.incoming().enumerate() {
             match tcp_stream {
                 Ok(tcp_stream) => {
                     let handler = Arc::clone(&handler);
@@ -48,15 +50,29 @@ impl Server {
                         "handling connection from: {}",
                         tcp_stream.peer_addr().unwrap()
                     );
-                    join_handles.push_back(thread::spawn(move || (handler)(tcp_stream)));
+                    let sender = sender.clone();
+                    join_handles.insert(
+                        thread_id,
+                        thread::spawn(move || {
+                            (handler)(tcp_stream);
+                            sender.send(thread_id).unwrap();
+                        }),
+                    );
                 }
                 Err(err) => {
                     println!("connection failed: {:?}", err);
                 }
             }
             while join_handles.len() >= self.max_connections as usize {
-                println!("maximum number of connections reached ({}) - waiting for for earliest connection to be closed", self.max_connections);
-                join_handles.pop_front().unwrap().join().unwrap();
+                println!("maximum number of connections reached ({}) - waiting for connections to be closed", self.max_connections);
+                let thread_id = match receiver.recv() {
+                    Ok(thread_id) => thread_id,
+                    Err(_) => break,
+                };
+                if let Some(join_handle) = join_handles.remove(&thread_id) {
+                    join_handle.join().unwrap();
+                }
+                println!("accepting new connections again");
             }
         }
     }
