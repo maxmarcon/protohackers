@@ -10,16 +10,10 @@ struct Insert {
 }
 
 impl Insert {
-    fn new(buf: &[u8]) -> Result<Self, ()> {
-        let insert = Self {
+    fn new(buf: &[u8]) -> Self {
+        Self {
             ts: i32::from_be_bytes(buf[0..4].try_into().unwrap()),
             price: i32::from_be_bytes(buf[4..].try_into().unwrap()),
-        };
-
-        if insert.ts < 0 {
-            Err(())
-        } else {
-            Ok(insert)
         }
     }
 }
@@ -30,16 +24,10 @@ struct Query {
 }
 
 impl Query {
-    fn new(buf: &[u8]) -> Result<Self, ()> {
-        let query = Self {
+    fn new(buf: &[u8]) -> Self {
+        Self {
             mints: i32::from_be_bytes(buf[0..4].try_into().unwrap()),
             maxts: i32::from_be_bytes(buf[4..].try_into().unwrap()),
-        };
-
-        if query.mints < 0 || query.maxts < 0 {
-            Err(())
-        } else {
-            Ok(query)
         }
     }
 }
@@ -107,8 +95,8 @@ fn handle_stream(mut tcpstream: TcpStream) {
 
 fn parse_message(buf: &[u8]) -> Result<Message, ()> {
     match buf[0] {
-        b'I' => Insert::new(&buf[1..9]).map(Message::I),
-        b'Q' => Query::new(&buf[1..9]).map(Message::Q),
+        b'I' => Ok(Message::I(Insert::new(&buf[1..9]))),
+        b'Q' => Ok(Message::Q(Query::new(&buf[1..9]))),
         _ => Err(()),
     }
 }
