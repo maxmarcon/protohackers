@@ -1,3 +1,5 @@
+mod async_lib;
+
 pub use clap::Parser;
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
@@ -46,15 +48,14 @@ impl Server {
             match tcp_stream {
                 Ok(tcp_stream) => {
                     let handler = Arc::clone(&handler);
-                    println!(
-                        "handling connection from: {}",
-                        tcp_stream.peer_addr().unwrap()
-                    );
                     let sender = sender.clone();
                     join_handles.insert(
                         thread_id,
                         thread::spawn(move || {
+                            let peer_addr = tcp_stream.peer_addr().unwrap();
+                            println!("handling connection from: {}", peer_addr);
                             (handler)(tcp_stream);
+                            println!("done handling connection from: {}", peer_addr);
                             sender.send(thread_id).unwrap();
                         }),
                     );

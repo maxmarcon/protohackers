@@ -17,8 +17,14 @@ name = "primetime"
 [[bin]]
 name = "meanstoanend"
 
+[[bin]]
+name = "budgetchat"
+
 
 [dependencies]
 clap = { version = "4.3.0", features = ["derive"] }
+futures = "0.3.28"
+rand = "0.8.5"
 serde = "1.0.163"
 serde_json = "1.0.96"
+tokio = { version = "1.28.2", features = ["rt", "macros", "rt-multi-thread", "time", "net", "sync", "io-util"] }
