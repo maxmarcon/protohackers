@@ -25,9 +25,10 @@ impl super::Server {
                     let sender = sender.clone();
                     let join_handle = spawn(async move {
                         println!("handling connection from: {}", socket_addr);
-                        handler(tcp_stream).await.unwrap();
+                        let handling_result = handler(tcp_stream).await;
                         println!("done handling connection from: {}", socket_addr);
                         sender.send(task_id).await.unwrap();
+                        handling_result
                     });
                     join_handles.insert(task_id, join_handle);
                 }
@@ -42,7 +43,9 @@ impl super::Server {
                     None => break,
                 };
                 if let Some(join_handle) = join_handles.remove(&task_id) {
-                    join_handle.await?;
+                    if let Err(error) = join_handle.await? {
+                        println!("{error:?}")
+                    }
                 }
                 println!("accepting new connections again");
             }
