@@ -1,15 +1,20 @@
 use futures::future::BoxFuture;
 use protohackers::{CliArgs, Parser, Server};
 use std::io::ErrorKind::{InvalidData, InvalidInput};
+use std::sync::Arc;
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::Sender;
 
 fn main() {
     let args = CliArgs::parse();
 
+    let handler: Arc<dyn Send + Sync + Fn(TcpStream) -> BoxFuture<'static, io::Result<()>>> =
+        { Arc::new(move |tcp_stream| Box::pin(async move { handle_stream(tcp_stream).await })) };
     Server::new(args.port, args.max_connections)
-        .serve_async(handle_stream)
+        .serve_async(handler)
         .unwrap();
 }
 
