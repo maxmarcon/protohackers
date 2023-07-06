@@ -20,8 +20,8 @@ impl From<serde_json::Error> for MessageError {
 fn main() {
     let args = CliArgs::parse();
 
-    let handler: Arc<dyn Fn(TcpStream) + Send + Sync + 'static> = {
-        Arc::new(move |tcpstream| {
+    let handler: Arc<dyn Fn(TcpStream) + Sync + Send> = {
+        Arc::new(|tcpstream| {
             handle_stream(tcpstream);
         })
     };

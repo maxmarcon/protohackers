@@ -47,8 +47,8 @@ impl Server {
         for (thread_id, tcp_stream) in listener.incoming().enumerate() {
             match tcp_stream {
                 Ok(tcp_stream) => {
-                    let handler = Arc::clone(&handler);
                     let sender = sender.clone();
+                    let handler = handler.clone();
                     join_handles.insert(
                         thread_id,
                         thread::spawn(move || {

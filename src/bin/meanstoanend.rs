@@ -40,8 +40,8 @@ enum Message {
 fn main() {
     let args = CliArgs::parse();
 
-    let handler: Arc<dyn Fn(TcpStream) + Send + Sync + 'static> = {
-        Arc::new(move |tcpstream| {
+    let handler: Arc<dyn Fn(TcpStream) + Send + Sync> = {
+        Arc::new(|tcpstream| {
             handle_stream(tcpstream);
         })
     };
