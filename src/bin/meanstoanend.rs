@@ -46,7 +46,9 @@ fn main() {
         })
     };
 
-    Server::new(args.port, args.max_connections).serve(handler);
+    Server::new(args.port, args.max_connections)
+        .serve(handler)
+        .unwrap();
 }
 
 const BUFFER_SIZE: usize = 9 * 100;

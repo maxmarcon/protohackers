@@ -2,10 +2,12 @@ mod async_lib;
 
 pub use clap::Parser;
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::thread;
+use tokio::io;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -37,9 +39,9 @@ impl Server {
         }
     }
 
-    pub fn serve(&self, handler: Arc<dyn Fn(TcpStream) + Send + Sync>) {
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port)).unwrap();
-        println!("listening on: {:?}", listener.local_addr().unwrap());
+    pub fn serve(&self, handler: Arc<dyn Fn(TcpStream) + Send + Sync>) -> io::Result<()> {
+        let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port))?;
+        println!("listening on: {:?}", listener.local_addr()?);
 
         let mut join_handles = HashMap::new();
 
@@ -66,15 +68,17 @@ impl Server {
             }
             while join_handles.len() >= self.max_connections as usize {
                 println!("maximum number of connections reached ({}) - waiting for connections to be closed", self.max_connections);
-                let thread_id = match receiver.recv() {
-                    Ok(thread_id) => thread_id,
-                    Err(_) => break,
-                };
+                let thread_id = receiver.recv().map_err(|_| {
+                    io::Error::new(ErrorKind::BrokenPipe, "receive from thread failed")
+                })?;
                 if let Some(join_handle) = join_handles.remove(&thread_id) {
-                    join_handle.join().unwrap();
+                    join_handle.join().map_err(|_| {
+                        io::Error::new(ErrorKind::BrokenPipe, "thread could not be joined")
+                    })?
                 }
                 println!("accepting new connections again");
             }
         }
+        Ok(())
     }
 }

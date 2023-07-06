@@ -15,7 +15,9 @@ fn main() {
         })
     };
 
-    Server::new(args.port, args.max_connections).serve(handler);
+    Server::new(args.port, args.max_connections)
+        .serve(handler)
+        .unwrap();
 
     let byte_count = Arc::into_inner(byte_count).unwrap().into_inner().unwrap();
     println!("received a total of {} bytes", byte_count);
