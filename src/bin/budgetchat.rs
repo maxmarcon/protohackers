@@ -1,57 +1,180 @@
+use crate::Error::Disconnected;
 use futures::future::BoxFuture;
 use protohackers::{CliArgs, Parser, Server};
-use std::io::ErrorKind::{InvalidData, InvalidInput};
+use std::fmt::{Display, Formatter};
+use std::io::ErrorKind;
+use std::io::ErrorKind::InvalidData;
 use std::sync::Arc;
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::{RecvError, SendError};
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::Sender;
 
 fn main() {
     let args = CliArgs::parse();
 
-    let handler: Arc<dyn Send + Sync + Fn(TcpStream) -> BoxFuture<'static, io::Result<()>>> =
-        { Arc::new(move |tcp_stream| Box::pin(async move { handle_stream(tcp_stream).await })) };
+    let (sender, _receiver) = broadcast::channel(100);
+
+    let handler: Arc<dyn Send + Sync + Fn(TcpStream) -> BoxFuture<'static, io::Result<()>>> = {
+        Arc::new(move |tcp_stream| {
+            let sender = sender.clone();
+            Box::pin(async move {
+                handle_stream(tcp_stream, sender.clone(), sender.subscribe())
+                    .await
+                    .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
+            })
+        })
+    };
+
     Server::new(args.port, args.max_connections)
         .serve_async(handler)
         .unwrap();
 }
 
-fn handle_stream(mut tcp_stream: TcpStream) -> BoxFuture<'static, io::Result<()>> {
-    Box::pin(async move {
-        let mut buffer = Vec::new();
-        let mut user_name = None;
-        tcp_stream.write_all(b"Hello, what's your name?").await?;
+#[derive(Clone, Debug, PartialEq)]
+enum ChatMsgSender {
+    System,
+    User(String),
+}
 
-        loop {
-            match recv_and_process(&mut tcp_stream, &mut buffer, &mut user_name).await {
-                error @ Err(_) => {
-                    tcp_stream
-                        .write_all(error.as_ref().unwrap_err().to_string().as_bytes())
-                        .await?;
-                    return error;
+#[derive(Clone, Debug)]
+struct ChatMsg {
+    sender: ChatMsgSender,
+    msg: String,
+}
+
+impl ChatMsg {
+    pub fn from_user(user: &str, msg: String) -> Self {
+        Self {
+            sender: ChatMsgSender::User(user.to_owned()),
+            msg,
+        }
+    }
+    pub fn from_system(msg: String) -> Self {
+        Self {
+            sender: ChatMsgSender::System,
+            msg,
+        }
+    }
+    pub fn is_from_user(&self, user: &str) -> bool {
+        match &self.sender {
+            ChatMsgSender::User(msg_user) => msg_user == user,
+            _ => false,
+        }
+    }
+}
+
+impl Display for ChatMsg {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match &self.sender {
+            ChatMsgSender::User(name) => writeln!(f, "[{}] {}", name, self.msg),
+            ChatMsgSender::System => writeln!(f, "* {}", self.msg),
+        }
+    }
+}
+
+enum Error {
+    InvalidName,
+    Disconnected,
+    IO(io::Error),
+    Receiver(RecvError),
+    Sender(SendError<ChatMsg>),
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Error::IO(value)
+    }
+}
+
+impl From<RecvError> for Error {
+    fn from(value: RecvError) -> Self {
+        Error::Receiver(value)
+    }
+}
+
+impl From<SendError<ChatMsg>> for Error {
+    fn from(value: SendError<ChatMsg>) -> Self {
+        Error::Sender(value)
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::InvalidName => f.write_str("InvalidName"),
+            Disconnected => f.write_str("Disconnected"),
+            Error::IO(io_error) => std::fmt::Display::fmt(io_error, f),
+            Error::Receiver(recv_error) => std::fmt::Display::fmt(recv_error, f),
+            Error::Sender(send_error) => std::fmt::Display::fmt(send_error, f),
+        }
+    }
+}
+
+async fn handle_stream(
+    mut tcp_stream: TcpStream,
+    sender: Sender<ChatMsg>,
+    mut receiver: Receiver<ChatMsg>,
+) -> Result<()> {
+    let mut buffer = Vec::new();
+    let mut user_name = None;
+    tcp_stream.write_all(b"Hello, what's your name?").await?;
+
+    loop {
+        tokio::select! {
+            result = recv_and_process(&mut tcp_stream, &mut buffer, &mut user_name, &sender) => {
+                match result {
+                    Err(error) => {
+                        if user_name.is_some() {
+                            sender.send(ChatMsg::from_system(format!("{} has left the room", user_name.unwrap())))?;
+                        }
+                        return Err(error);
+                    },
+                    Ok(_) => (),
                 }
-                Ok(_) => (),
+            }
+            result = receiver.recv() => {
+                let chat_msg = result?;
+                if !chat_msg.is_from_user(user_name.as_ref().unwrap()) {
+                    tcp_stream.write_all(chat_msg.to_string().as_bytes()).await?;
+                }
             }
         }
-    })
+    }
 }
 
 async fn recv_and_process(
     tcp_stream: &mut TcpStream,
     buffer: &mut Vec<u8>,
     user_name: &mut Option<String>,
-) -> io::Result<()> {
+    sender: &Sender<ChatMsg>,
+) -> Result<()> {
     let read_bytes = tcp_stream.read_buf(buffer).await?;
     if read_bytes == 0 {
-        return Ok(());
+        return Err(Disconnected);
     }
     if let Some(msg) = parse_message(buffer)? {
         if user_name.is_none() {
-            *user_name = Some(validate_name(msg)?);
+            *user_name = match validate_name(msg) {
+                Ok(user_name) => Some(user_name),
+                Err(error) => {
+                    tcp_stream.write_all(error.to_string().as_bytes()).await?;
+                    return Err(error);
+                }
+            };
+            sender
+                .send(ChatMsg::from_system(format!(
+                    "{} has entered the room. Kneel in front of {0}!",
+                    user_name.as_ref().unwrap()
+                )))
+                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
         } else {
-            tcp_stream.write_all(msg.as_bytes()).await?;
+            sender.send(ChatMsg::from_user(user_name.as_ref().unwrap(), msg))?;
         }
     }
     Ok(())
@@ -71,9 +194,9 @@ fn parse_message(buffer: &mut Vec<u8>) -> io::Result<Option<String>> {
     Ok(None)
 }
 
-fn validate_name(name: String) -> io::Result<String> {
+fn validate_name(name: String) -> Result<String> {
     if name.chars().any(|c| !c.is_alphanumeric()) {
-        return Err(io::Error::new(InvalidInput, "invalid name"));
+        return Err(Error::InvalidName);
     }
     Ok(name)
 }
