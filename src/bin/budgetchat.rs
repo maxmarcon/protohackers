@@ -1,6 +1,7 @@
 use crate::Error::Disconnected;
 use futures::future::BoxFuture;
 use protohackers::{CliArgs, Parser, Server};
+use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 use std::io::ErrorKind;
 use std::io::ErrorKind::InvalidData;
@@ -8,21 +9,24 @@ use std::sync::Arc;
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::{RecvError, SendError};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::Sender;
+use tokio::sync::{broadcast, Mutex};
 
 fn main() {
     let args = CliArgs::parse();
 
     let (sender, _receiver) = broadcast::channel(100);
 
+    let users = Arc::new(Mutex::new(HashSet::new()));
+
     let handler: Arc<dyn Send + Sync + Fn(TcpStream) -> BoxFuture<'static, io::Result<()>>> = {
         Arc::new(move |tcp_stream| {
             let sender = sender.clone();
+            let users = users.clone();
             Box::pin(async move {
-                handle_stream(tcp_stream, sender.clone(), sender.subscribe())
+                handle_stream(tcp_stream, sender.clone(), sender.subscribe(), &users)
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
             })
@@ -63,6 +67,7 @@ impl ChatMsg {
         }
     }
 }
+
 impl Display for ChatMsg {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.sender {
@@ -116,6 +121,7 @@ async fn handle_stream(
     mut tcp_stream: TcpStream,
     sender: Sender<ChatMsg>,
     mut receiver: Receiver<ChatMsg>,
+    users: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<()> {
     let mut buffer = Vec::new();
     let mut user_name = None;
@@ -123,20 +129,18 @@ async fn handle_stream(
 
     loop {
         tokio::select! {
-            result = recv_and_process(&mut tcp_stream, &mut buffer, &mut user_name, &sender) => {
-                match result {
-                    Err(error) => {
-                        if user_name.is_some() {
-                            sender.send(ChatMsg::from_system(user_name.as_ref().unwrap(), format!("{} has left the room", user_name.as_ref().unwrap())))?;
-                        }
-                        return Err(error);
-                    },
-                    Ok(_) => (),
+            result = recv_and_process(&mut tcp_stream, &mut buffer, &mut user_name, &sender, users) => {
+                if let Err(error) = result {
+                    if user_name.is_some() {
+                        sender.send(ChatMsg::from_system(user_name.as_ref().unwrap(), format!("{} has left the room", user_name.as_ref().unwrap())))?;
+                        users.lock().await.remove(user_name.as_ref().unwrap());
+                    }
+                    return Err(error);
                 }
             }
             result = receiver.recv() => {
                 let chat_msg = result?;
-                if !chat_msg.subject.eq(user_name.as_ref().unwrap()) {
+                if user_name.is_some() && !chat_msg.subject.eq(user_name.as_ref().unwrap()) {
                     tcp_stream.write_all(chat_msg.to_string().as_bytes()).await?;
                 }
             }
@@ -149,6 +153,7 @@ async fn recv_and_process(
     buffer: &mut Vec<u8>,
     user_name: &mut Option<String>,
     sender: &Sender<ChatMsg>,
+    users: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<()> {
     let read_bytes = tcp_stream.read_buf(buffer).await?;
     if read_bytes == 0 {
@@ -167,9 +172,25 @@ async fn recv_and_process(
             sender
                 .send(ChatMsg::from_system(
                     user_name,
-                    format!("{} has entered the room. Kneel in front of {0}!", user_name),
+                    format!("{} has entered the room", user_name),
                 ))
                 .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+            tcp_stream
+                .write_all(
+                    format!(
+                        "* The room contains: {}\n",
+                        users
+                            .lock()
+                            .await
+                            .iter()
+                            .map(String::as_ref)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                    .as_bytes(),
+                )
+                .await?;
+            users.lock().await.insert(user_name.to_owned());
         } else {
             sender.send(ChatMsg::from_user(user_name.as_ref().unwrap(), msg))?;
         }
