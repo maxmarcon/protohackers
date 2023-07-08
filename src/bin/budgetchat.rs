@@ -26,9 +26,14 @@ fn main() {
             let sender = sender.clone();
             let users = users.clone();
             Box::pin(async move {
-                handle_stream(tcp_stream, sender.clone(), sender.subscribe(), &users)
-                    .await
-                    .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
+                handle_stream(
+                    tcp_stream,
+                    sender.clone(),
+                    sender.subscribe(),
+                    users.clone(),
+                )
+                .await
+                .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
             })
         })
     };
@@ -121,7 +126,7 @@ async fn handle_stream(
     mut tcp_stream: TcpStream,
     sender: Sender<ChatMsg>,
     mut receiver: Receiver<ChatMsg>,
-    users: &Arc<Mutex<HashSet<String>>>,
+    users: Arc<Mutex<HashSet<String>>>,
 ) -> Result<()> {
     let mut buffer = Vec::new();
     let mut user_name = None;
@@ -129,7 +134,7 @@ async fn handle_stream(
 
     loop {
         tokio::select! {
-            result = recv_and_process(&mut tcp_stream, &mut buffer, &mut user_name, &sender, users) => {
+            result = recv_and_process(&mut tcp_stream, &mut buffer, &mut user_name, &sender, &users) => {
                 if let Err(error) = result {
                     if user_name.is_some() {
                         sender.send(ChatMsg::from_system(user_name.as_ref().unwrap(), format!("{} has left the room", user_name.as_ref().unwrap())))?;
