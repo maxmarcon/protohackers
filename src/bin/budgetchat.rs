@@ -34,43 +34,39 @@ fn main() {
         .unwrap();
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 enum ChatMsgSender {
     System,
-    User(String),
+    User,
 }
 
 #[derive(Clone, Debug)]
 struct ChatMsg {
+    pub subject: String,
     sender: ChatMsgSender,
     msg: String,
 }
 
 impl ChatMsg {
-    pub fn from_user(user: &str, msg: String) -> Self {
+    pub fn from_user(subject: &str, msg: String) -> Self {
         Self {
-            sender: ChatMsgSender::User(user.to_owned()),
+            subject: subject.to_owned(),
+            sender: ChatMsgSender::User,
             msg,
         }
     }
-    pub fn from_system(msg: String) -> Self {
+    pub fn from_system(subject: &str, msg: String) -> Self {
         Self {
+            subject: subject.to_owned(),
             sender: ChatMsgSender::System,
             msg,
         }
     }
-    pub fn is_from_user(&self, user: &str) -> bool {
-        match &self.sender {
-            ChatMsgSender::User(msg_user) => msg_user == user,
-            _ => false,
-        }
-    }
 }
-
 impl Display for ChatMsg {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.sender {
-            ChatMsgSender::User(name) => writeln!(f, "[{}] {}", name, self.msg),
+            ChatMsgSender::User => writeln!(f, "[{}] {}", self.subject, self.msg),
             ChatMsgSender::System => writeln!(f, "* {}", self.msg),
         }
     }
@@ -123,7 +119,7 @@ async fn handle_stream(
 ) -> Result<()> {
     let mut buffer = Vec::new();
     let mut user_name = None;
-    tcp_stream.write_all(b"Hello, what's your name?").await?;
+    tcp_stream.write_all(b"Hello, what's your name?\n").await?;
 
     loop {
         tokio::select! {
@@ -131,7 +127,7 @@ async fn handle_stream(
                 match result {
                     Err(error) => {
                         if user_name.is_some() {
-                            sender.send(ChatMsg::from_system(format!("{} has left the room", user_name.unwrap())))?;
+                            sender.send(ChatMsg::from_system(user_name.as_ref().unwrap(), format!("{} has left the room", user_name.as_ref().unwrap())))?;
                         }
                         return Err(error);
                     },
@@ -140,7 +136,7 @@ async fn handle_stream(
             }
             result = receiver.recv() => {
                 let chat_msg = result?;
-                if !chat_msg.is_from_user(user_name.as_ref().unwrap()) {
+                if !chat_msg.subject.eq(user_name.as_ref().unwrap()) {
                     tcp_stream.write_all(chat_msg.to_string().as_bytes()).await?;
                 }
             }
@@ -167,11 +163,12 @@ async fn recv_and_process(
                     return Err(error);
                 }
             };
+            let user_name: &str = user_name.as_ref().unwrap();
             sender
-                .send(ChatMsg::from_system(format!(
-                    "{} has entered the room. Kneel in front of {0}!",
-                    user_name.as_ref().unwrap()
-                )))
+                .send(ChatMsg::from_system(
+                    user_name,
+                    format!("{} has entered the room. Kneel in front of {0}!", user_name),
+                ))
                 .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
         } else {
             sender.send(ChatMsg::from_user(user_name.as_ref().unwrap(), msg))?;
