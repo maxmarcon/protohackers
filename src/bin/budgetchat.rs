@@ -24,16 +24,12 @@ fn main() {
     let handler: Arc<dyn Send + Sync + Fn(TcpStream) -> BoxFuture<'static, io::Result<()>>> = {
         Arc::new(move |tcp_stream| {
             let sender = sender.clone();
+            let receiver = sender.subscribe();
             let users = users.clone();
             Box::pin(async move {
-                handle_stream(
-                    tcp_stream,
-                    sender.clone(),
-                    sender.subscribe(),
-                    users.clone(),
-                )
-                .await
-                .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
+                handle_stream(tcp_stream, sender, receiver, users)
+                    .await
+                    .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
             })
         })
     };
