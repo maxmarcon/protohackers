@@ -79,12 +79,15 @@ impl Server {
                     let handler = handler.clone();
                     join_handles.insert(
                         thread_id,
-                        thread::spawn(move || {
-                            let peer_addr = tcp_stream.peer_addr().unwrap();
+                        thread::spawn(move || -> io::Result<()> {
+                            let peer_addr = tcp_stream.peer_addr()?;
                             println!("handling connection from: {}", peer_addr);
                             (handler)(tcp_stream);
                             println!("done handling connection from: {}", peer_addr);
-                            sender.send(thread_id).unwrap();
+                            sender
+                                .send(thread_id)
+                                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+                            Ok(())
                         }),
                     );
                 }
@@ -98,9 +101,13 @@ impl Server {
                     io::Error::new(ErrorKind::BrokenPipe, "receive from thread failed")
                 })?;
                 if let Some(join_handle) = join_handles.remove(&thread_id) {
-                    join_handle.join().map_err(|_| {
-                        io::Error::new(ErrorKind::BrokenPipe, "thread could not be joined")
-                    })?
+                    join_handle
+                        .join()
+                        .unwrap_or_else(|e| {
+                            println!("thread failed: {:?}", e);
+                            Ok(())
+                        })
+                        .unwrap_or_else(|e| println!("thread returned error: {:?}", e));
                 }
                 println!("accepting new connections again");
             }

@@ -45,9 +45,13 @@ impl super::Server {
                     None => break,
                 };
                 if let Some(join_handle) = join_handles.remove(&task_id) {
-                    if let Err(error) = join_handle.await? {
-                        println!("{error:?}")
-                    }
+                    join_handle
+                        .await
+                        .unwrap_or_else(|e| {
+                            println!("task failed: {:?}", e);
+                            Ok(())
+                        })
+                        .unwrap_or_else(|e| println!("task returned error: {:?}", e));
                 }
                 println!("accepting new connections again");
             }
