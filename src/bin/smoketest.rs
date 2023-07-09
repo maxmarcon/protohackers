@@ -8,14 +8,14 @@ fn main() {
 
     let byte_count = Arc::new(Mutex::new(0));
 
-    let handler: Arc<dyn Fn(TcpStream) + Send + Sync> = {
+    let handler: Arc<_> = {
         let byte_count = Arc::clone(&byte_count);
         Arc::new(move |tcpstream| {
             handle_stream(tcpstream, &byte_count);
         })
     };
 
-    Server::new(args.port, args.max_connections)
+    Server::new(args.port, args.max_connections, args.max_udp_size)
         .serve(handler)
         .unwrap();
 

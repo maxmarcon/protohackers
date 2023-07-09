@@ -20,6 +20,8 @@ name = "meanstoanend"
 [[bin]]
 name = "budgetchat"
 
+[[bin]]
+name = "unusualdb"
 
 [dependencies]
 clap = { version = "4.3.0", features = ["derive"] }

@@ -9,10 +9,10 @@ use tokio::sync::mpsc::channel;
 
 impl super::Server {
     #[tokio::main]
-    pub async fn serve_async(
-        &self,
-        handler: Arc<dyn Send + Sync + Fn(TcpStream) -> BoxFuture<'static, io::Result<()>>>,
-    ) -> io::Result<()> {
+    pub async fn serve_async<F>(&self, handler: Arc<F>) -> io::Result<()>
+    where
+        F: Send + Sync + 'static + ?Sized + Fn(TcpStream) -> BoxFuture<'static, io::Result<()>>,
+    {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port)).await?;
         println!("listening on: {:?}", listener.local_addr().unwrap());
         let mut task_id = 0;

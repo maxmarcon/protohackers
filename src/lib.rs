@@ -3,7 +3,7 @@ mod async_lib;
 pub use clap::Parser;
 use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::thread;
@@ -24,22 +24,48 @@ pub struct CliArgs {
         default_value_t = 5
     )]
     pub max_connections: u16,
+
+    #[arg(
+        short = 'u',
+        long,
+        help = "Max size of received UDP datagrams",
+        default_value_t = 1_000
+    )]
+    pub max_udp_size: usize,
 }
 
 pub struct Server {
     port: u16,
     max_connections: u16,
+    max_udp_size: usize,
 }
 
 impl Server {
-    pub fn new(port: u16, max_connections: u16) -> Self {
+    pub fn new(port: u16, max_connections: u16, max_udp_size: usize) -> Self {
         Self {
             port,
             max_connections,
+            max_udp_size,
         }
     }
 
-    pub fn serve(&self, handler: Arc<dyn Fn(TcpStream) + Send + Sync>) -> io::Result<()> {
+    pub fn serve_udp<F>(&self, handler: &mut F) -> io::Result<()>
+    where
+        F: FnMut(&[u8], SocketAddr) -> io::Result<()>,
+    {
+        let socket = UdpSocket::bind(format!("0.0.0.0:{}", self.port))?;
+        println!("listening on: {:?}", socket.local_addr()?);
+        let mut buf = vec![0; self.max_udp_size];
+        loop {
+            let (bytes, peer) = socket.recv_from(&mut buf)?;
+            handler(&buf[..bytes], peer)?;
+        }
+    }
+
+    pub fn serve<F>(&self, handler: Arc<F>) -> io::Result<()>
+    where
+        F: Fn(TcpStream) + Send + Sync + 'static + ?Sized,
+    {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port))?;
         println!("listening on: {:?}", listener.local_addr()?);
 

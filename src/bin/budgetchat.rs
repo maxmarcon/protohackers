@@ -21,8 +21,8 @@ fn main() {
 
     let users = Arc::new(Mutex::new(HashSet::new()));
 
-    let handler: Arc<dyn Send + Sync + Fn(TcpStream) -> BoxFuture<'static, io::Result<()>>> = {
-        Arc::new(move |tcp_stream| {
+    let handler: Arc<_> = {
+        Arc::new(move |tcp_stream| -> BoxFuture<'static, io::Result<()>> {
             let sender = sender.clone();
             let receiver = sender.subscribe();
             let users = users.clone();
@@ -34,7 +34,7 @@ fn main() {
         })
     };
 
-    Server::new(args.port, args.max_connections)
+    Server::new(args.port, args.max_connections, args.max_udp_size)
         .serve_async(handler)
         .unwrap();
 }

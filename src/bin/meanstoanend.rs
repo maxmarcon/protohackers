@@ -40,13 +40,13 @@ enum Message {
 fn main() {
     let args = CliArgs::parse();
 
-    let handler: Arc<dyn Fn(TcpStream) + Send + Sync> = {
+    let handler: Arc<_> = {
         Arc::new(|tcpstream| {
             handle_stream(tcpstream);
         })
     };
 
-    Server::new(args.port, args.max_connections)
+    Server::new(args.port, args.max_connections, args.max_udp_size)
         .serve(handler)
         .unwrap();
 }
