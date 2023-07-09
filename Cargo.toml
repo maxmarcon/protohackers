@@ -23,6 +23,9 @@ name = "budgetchat"
 [[bin]]
 name = "unusualdb"
 
+[[bin]]
+name = "mob"
+
 [dependencies]
 clap = { version = "4.3.0", features = ["derive"] }
 futures = "0.3.28"
