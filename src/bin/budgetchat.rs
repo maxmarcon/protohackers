@@ -160,7 +160,7 @@ async fn recv_and_process(
     if read_bytes == 0 {
         return Err(Disconnected);
     }
-    if let Some(msg) = parse_message(buffer)? {
+    while let Some(msg) = parse_message(buffer)? {
         if user_name.is_none() {
             *user_name = match validate_name(msg) {
                 Ok(user_name) => Some(user_name),
