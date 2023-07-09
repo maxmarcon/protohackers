@@ -38,7 +38,8 @@ fn handle_datagram(
             let key = std::str::from_utf8(key).unwrap();
 
             if let Some(val) = db.get(key) {
-                socket.send_to(val.as_bytes(), peer)?;
+                let response = format!("{key}={val}");
+                socket.send_to(response.as_bytes(), peer)?;
             }
         }
         [..] => panic!("unexpected"),
