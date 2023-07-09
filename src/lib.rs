@@ -51,14 +51,14 @@ impl Server {
 
     pub fn serve_udp<F>(&self, handler: &mut F) -> io::Result<()>
     where
-        F: FnMut(&[u8], SocketAddr) -> io::Result<()>,
+        F: FnMut(&[u8], &UdpSocket, SocketAddr) -> io::Result<()>,
     {
         let socket = UdpSocket::bind(format!("0.0.0.0:{}", self.port))?;
         println!("listening on: {:?}", socket.local_addr()?);
         let mut buf = vec![0; self.max_udp_size];
         loop {
             let (bytes, peer) = socket.recv_from(&mut buf)?;
-            handler(&buf[..bytes], peer)?;
+            handler(&buf[..bytes], &socket, peer)?;
         }
     }
 
