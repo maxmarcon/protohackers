@@ -27,6 +27,7 @@ name = "unusualdb"
 name = "mob"
 
 [dependencies]
+async-stream = "0.3.5"
 clap = { version = "4.3.0", features = ["derive"] }
 futures = "0.3.28"
 rand = "0.8.5"
