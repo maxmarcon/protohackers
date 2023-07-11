@@ -1,9 +1,9 @@
 use async_stream::try_stream;
 use futures::future::BoxFuture;
 use futures::{pin_mut, Stream, StreamExt};
+use protohackers::budgetchat::parse_message;
 use protohackers::{CliArgs, Parser, Server};
 use regex::Regex;
-use std::io::ErrorKind;
 use std::sync::Arc;
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -79,25 +79,25 @@ fn read_message(tcpstream: &mut OwnedReadHalf) -> impl Stream<Item = io::Result<
     }
 }
 
-fn parse_message(buffer: &mut Vec<u8>) -> io::Result<Option<String>> {
-    if let Some(pos) = buffer
-        .iter()
-        .enumerate()
-        .find(|(_pos, c)| **c == b'\n')
-        .map(|(pos, _)| pos)
-    {
-        return String::from_utf8(buffer.drain(..=pos).collect())
-            .map(|msg| Some(msg.trim_matches('\n').to_owned()))
-            .map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
-    }
-    Ok(None)
-}
-
 fn find_and_replace_bc(msg: &str) -> String {
-    let re1 = Regex::new(r"[\^\s]7[0-9a-zA-Z]{25,34}").unwrap();
-    let re2 = Regex::new(r"7[0-9a-zA-Z]{25,34}[\s$]").unwrap();
+    let re = Regex::new(r"7[0-9a-zA-Z]{25,34}").unwrap();
 
-    let msg = re1.replace_all(msg, TONYSBOGUSCOIN);
-    let msg = re2.replace_all(&msg, TONYSBOGUSCOIN);
-    msg.into()
+    let mut new_msg = msg.to_owned();
+    let matches: Vec<_> = re.find_iter(msg).collect();
+    for m in matches.into_iter().rev() {
+        if (m.start() == 0
+            || msg
+                .chars()
+                .nth(m.start() - 1)
+                .is_some_and(|c| c.is_ascii_whitespace()))
+            && (m.end() == msg.len()
+                || msg
+                    .chars()
+                    .nth(m.end())
+                    .is_some_and(|c| c.is_ascii_whitespace()))
+        {
+            new_msg.replace_range(m.range(), TONYSBOGUSCOIN)
+        }
+    }
+    new_msg
 }
