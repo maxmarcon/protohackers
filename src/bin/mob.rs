@@ -2,6 +2,7 @@ use async_stream::try_stream;
 use futures::future::BoxFuture;
 use futures::{pin_mut, Stream, StreamExt};
 use protohackers::{CliArgs, Parser, Server};
+use regex::Regex;
 use std::io::ErrorKind;
 use std::sync::Arc;
 use tokio::io;
@@ -10,6 +11,8 @@ use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::TcpStream;
 
 const UPSTREAM_SERVER: &str = "chat.protohackers.com:16963";
+
+const TONYSBOGUSCOIN: &str = "7YWHMfk9JZe0LM0g1ZauHuiSxhI";
 
 fn main() {
     let args = CliArgs::parse();
@@ -40,13 +43,19 @@ async fn handle(client_tcp_stream: TcpStream) -> io::Result<()> {
         tokio::select! {
             from_client = client_msg_stream.next() => {
                 match from_client {
-                    Some(result) => server_tcp_stream_writer.write_all(result?.as_bytes()).await?,
+                    Some(result) =>  {
+                        let msg = find_and_replace_bc(&result?);
+                        server_tcp_stream_writer.write_all(format!("{msg}\n").as_bytes()).await?
+                    }
                     None => break
                 }
             }
             from_server = server_msg_stream.next() => {
                 match from_server {
-                    Some(result) => client_tcp_stream_writer.write_all(result?.as_bytes()).await?,
+                    Some(result) => {
+                        let msg = find_and_replace_bc(&result?);
+                        client_tcp_stream_writer.write_all(format!("{msg}\n").as_bytes()).await?
+                    }
                     None => break
                 }
             }
@@ -78,8 +87,17 @@ fn parse_message(buffer: &mut Vec<u8>) -> io::Result<Option<String>> {
         .map(|(pos, _)| pos)
     {
         return String::from_utf8(buffer.drain(..=pos).collect())
-            .map(Some)
+            .map(|msg| Some(msg.trim_matches('\n').to_owned()))
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e));
     }
     Ok(None)
+}
+
+fn find_and_replace_bc(msg: &str) -> String {
+    let re1 = Regex::new(r"[\^\s]7[0-9a-zA-Z]{25,34}").unwrap();
+    let re2 = Regex::new(r"7[0-9a-zA-Z]{25,34}[\s$]").unwrap();
+
+    let msg = re1.replace_all(msg, TONYSBOGUSCOIN);
+    let msg = re2.replace_all(&msg, TONYSBOGUSCOIN);
+    msg.into()
 }

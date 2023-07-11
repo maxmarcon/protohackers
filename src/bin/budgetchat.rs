@@ -1,10 +1,10 @@
 use crate::Error::Disconnected;
 use futures::future::BoxFuture;
+use protohackers::budgetchat::parse_message;
 use protohackers::{CliArgs, Parser, Server};
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 use std::io::ErrorKind;
-use std::io::ErrorKind::InvalidData;
 use std::sync::Arc;
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -197,20 +197,6 @@ async fn recv_and_process(
         }
     }
     Ok(())
-}
-
-fn parse_message(buffer: &mut Vec<u8>) -> io::Result<Option<String>> {
-    if let Some(pos) = buffer
-        .iter()
-        .enumerate()
-        .find(|(_pos, c)| **c == b'\n')
-        .map(|(pos, _)| pos)
-    {
-        return String::from_utf8(buffer.drain(..=pos).collect())
-            .map(|msg| Some(msg.trim().to_owned()))
-            .map_err(|e| io::Error::new(InvalidData, e));
-    }
-    Ok(None)
 }
 
 fn validate_name(name: String) -> Result<String> {

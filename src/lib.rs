@@ -1,4 +1,5 @@
 mod async_lib;
+pub mod budgetchat;
 
 pub use clap::Parser;
 use std::collections::HashMap;
@@ -21,7 +22,7 @@ pub struct CliArgs {
         short = 'c',
         long,
         help = "Serve at most these many connections in parallel",
-        default_value_t = 5
+        default_value_t = 100
     )]
     pub max_connections: u16,
 
