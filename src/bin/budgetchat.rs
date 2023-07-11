@@ -136,7 +136,10 @@ async fn handle_stream(
                         sender.send(ChatMsg::from_system(user_name.as_ref().unwrap(), format!("{} has left the room", user_name.as_ref().unwrap())))?;
                         users.lock().await.remove(user_name.as_ref().unwrap());
                     }
-                    return Err(error);
+                    match error {
+                        Disconnected => return Ok(()),
+                        _ => return Err(error)
+                    }
                 }
             }
             result = receiver.recv() => {
