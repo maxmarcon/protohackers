@@ -3,7 +3,6 @@ use serde_json::{json, value::Value, Map};
 use std::io;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::Arc;
 
 #[derive(Debug)]
 enum MessageError {
@@ -21,10 +20,10 @@ impl From<serde_json::Error> for MessageError {
 fn main() {
     let args = CliArgs::parse();
 
-    let handler: Arc<_> = { Arc::new(|tcpstream| handle_stream(tcpstream)) };
+    let handler = handle_stream;
 
     Server::new(args.port, args.max_connections, args.max_udp_size)
-        .serve(handler)
+        .serve(handler.into())
         .unwrap();
 }
 

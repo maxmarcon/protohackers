@@ -83,12 +83,12 @@ impl Server {
                         thread::spawn(move || -> io::Result<()> {
                             let peer_addr = tcp_stream.peer_addr()?;
                             println!("handling connection from: {}", peer_addr);
-                            (handler)(tcp_stream)?;
+                            let handler_result = (handler)(tcp_stream);
                             println!("done handling connection from: {}", peer_addr);
                             sender
                                 .send(thread_id)
                                 .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
-                            Ok(())
+                            handler_result
                         }),
                     );
                 }
