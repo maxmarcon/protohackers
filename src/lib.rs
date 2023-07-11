@@ -65,7 +65,7 @@ impl Server {
 
     pub fn serve<F>(&self, handler: Arc<F>) -> io::Result<()>
     where
-        F: Fn(TcpStream) + Send + Sync + 'static + ?Sized,
+        F: Send + Sync + 'static + ?Sized + Fn(TcpStream) -> io::Result<()>,
     {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", self.port))?;
         println!("listening on: {:?}", listener.local_addr()?);
@@ -83,7 +83,7 @@ impl Server {
                         thread::spawn(move || -> io::Result<()> {
                             let peer_addr = tcp_stream.peer_addr()?;
                             println!("handling connection from: {}", peer_addr);
-                            (handler)(tcp_stream);
+                            (handler)(tcp_stream)?;
                             println!("done handling connection from: {}", peer_addr);
                             sender
                                 .send(thread_id)

@@ -1,5 +1,6 @@
 use protohackers::{CliArgs, Parser, Server};
 use serde_json::{json, value::Value, Map};
+use std::io;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
@@ -20,11 +21,7 @@ impl From<serde_json::Error> for MessageError {
 fn main() {
     let args = CliArgs::parse();
 
-    let handler: Arc<_> = {
-        Arc::new(|tcpstream| {
-            handle_stream(tcpstream);
-        })
-    };
+    let handler: Arc<_> = { Arc::new(|tcpstream| handle_stream(tcpstream)) };
 
     Server::new(args.port, args.max_connections, args.max_udp_size)
         .serve(handler)
@@ -33,7 +30,7 @@ fn main() {
 
 const READ_CHUNK: usize = 256;
 
-fn handle_stream(mut tcpstream: TcpStream) {
+fn handle_stream(mut tcpstream: TcpStream) -> io::Result<()> {
     let mut buffer = vec![0; READ_CHUNK];
     let mut write_from = 0;
 
@@ -64,7 +61,7 @@ fn handle_stream(mut tcpstream: TcpStream) {
                     tcpstream
                         .write_all(json!({ "error": format!("{e:?}") }).to_string().as_bytes())
                         .unwrap();
-                    return;
+                    break;
                 }
             }
 
@@ -80,6 +77,7 @@ fn handle_stream(mut tcpstream: TcpStream) {
             buffer.append(&mut vec![0_u8; READ_CHUNK]);
         }
     }
+    Ok(())
 }
 
 fn parse_message(bytes: &[u8]) -> Result<Map<String, Value>, MessageError> {

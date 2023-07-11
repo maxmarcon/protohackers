@@ -1,5 +1,6 @@
 use protohackers::{CliArgs, Parser, Server};
 use std::collections::BTreeMap;
+use std::io;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
@@ -40,11 +41,7 @@ enum Message {
 fn main() {
     let args = CliArgs::parse();
 
-    let handler: Arc<_> = {
-        Arc::new(|tcpstream| {
-            handle_stream(tcpstream);
-        })
-    };
+    let handler: Arc<_> = { Arc::new(|tcpstream| handle_stream(tcpstream)) };
 
     Server::new(args.port, args.max_connections, args.max_udp_size)
         .serve(handler)
@@ -53,7 +50,7 @@ fn main() {
 
 const BUFFER_SIZE: usize = 9 * 100;
 
-fn handle_stream(mut tcpstream: TcpStream) {
+fn handle_stream(mut tcpstream: TcpStream) -> io::Result<()> {
     let mut buf = Vec::from([0; BUFFER_SIZE]);
     let mut write_from = 0;
 
@@ -71,7 +68,7 @@ fn handle_stream(mut tcpstream: TcpStream) {
                 Ok(message) => message,
                 Err(()) => {
                     tcpstream.write_all(&[0]).unwrap();
-                    return;
+                    break;
                 }
             };
 
@@ -93,6 +90,7 @@ fn handle_stream(mut tcpstream: TcpStream) {
             buf = Vec::from([0; BUFFER_SIZE]);
         }
     }
+    Ok(())
 }
 
 fn parse_message(buf: &[u8]) -> Result<Message, ()> {
