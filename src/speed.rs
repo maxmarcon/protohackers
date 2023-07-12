@@ -123,4 +123,75 @@ pub mod Msg {
             bytes
         }
     }
+
+    struct WantHeartbeat {
+        interval: u32,
+    }
+
+    impl WantHeartbeat {
+        const CODE: u8 = 0x40;
+
+        pub fn new(interval: u32) -> Self {
+            Self { interval }
+        }
+
+        pub fn encode(&self) -> Vec<u8> {
+            let mut bytes = Vec::from([WantHeartbeat::CODE]);
+            bytes.append(&mut self.interval.to_be_bytes().to_vec());
+            bytes
+        }
+    }
+
+    struct Heartbeat {}
+
+    impl Heartbeat {
+        const CODE: u8 = 0x41;
+
+        pub fn encode() -> Vec<u8> {
+            Vec::from([Heartbeat::CODE])
+        }
+    }
+
+    struct IAmCamera {
+        road: u16,
+        mile: u16,
+        limit: u16,
+    }
+
+    impl IAmCamera {
+        const CODE: u8 = 0x80;
+
+        pub fn new(road: u16, mile: u16, limit: u16) -> Self {
+            Self { road, mile, limit }
+        }
+
+        pub fn encode(&self) -> Vec<u8> {
+            let mut bytes = Vec::from([IAmCamera::CODE]);
+            bytes.append(&mut self.road.to_be_bytes().to_vec());
+            bytes.append(&mut self.mile.to_be_bytes().to_vec());
+            bytes.append(&mut self.limit.to_be_bytes().to_vec());
+            bytes
+        }
+    }
+
+    struct IAmDispatcher {
+        roads: Vec<u16>,
+    }
+
+    impl IAmDispatcher {
+        const CODE: u8 = 0x81;
+
+        pub fn decode(bytes: &[u8]) -> Result<Self, super::Error> {
+            if bytes.is_empty() {
+                return Err(super::Error::InvalidMsg);
+            }
+            let numroads = bytes[0] as usize;
+            let mut roads = Vec::with_capacity(numroads);
+            for _ in (0..numroads) {
+                let (road, rest) = decode_u16(bytes)?;
+                roads.push(road);
+            }
+            Ok(Self { roads: roads })
+        }
+    }
 }
