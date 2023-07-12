@@ -1,11 +1,26 @@
+use crate::ClientType::Unknown;
+use async_stream::try_stream;
 use futures::future::BoxFuture;
+use futures::StreamExt;
+use futures::{pin_mut, Stream};
+use protohackers::speed;
+use protohackers::speed::msg::Ticket;
+use protohackers::speed::{DecodeError, DecodedMsg};
 use protohackers::{CliArgs, Parser, Server};
-use serde_json::map::OccupiedEntry;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::io::Read;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::{Receiver, Sender};
+
+enum ClientType {
+    Camera,
+    Dispatcher,
+    Unknown,
+}
 
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
 struct Reading {
@@ -46,14 +61,30 @@ impl Reading {
 }
 
 type ReadingMap = BTreeMap<Reading, u16>;
+type DispatcherMap = HashMap<u16, Vec<u16>>;
 
 fn main() {
-    let readings: ReadingMap = BTreeMap::new();
+    let readings = Arc::new(Mutex::new(BTreeMap::new()));
 
+    let dispatchers = Arc::new(Mutex::new(HashMap::new()));
+
+    let (sender, _receiver) = broadcast::channel(100);
     let args = CliArgs::parse();
 
     let handler: Arc<_> = Arc::new(move |tcpstream| -> BoxFuture<'static, io::Result<()>> {
-        Box::pin(async { handle_connection(tcpstream) })
+        let readings = readings.clone();
+        let dispatchers = dispatchers.clone();
+        let sender = sender.clone();
+        Box::pin(async move {
+            handle_connection(
+                tcpstream,
+                readings,
+                dispatchers,
+                sender.clone(),
+                sender.subscribe(),
+            )
+            .await
+        })
     });
 
     Server::new(args.port, args.max_connections, args.max_udp_size)
@@ -61,6 +92,45 @@ fn main() {
         .unwrap();
 }
 
-fn handle_connection(tcpstream: TcpStream) -> io::Result<()> {
+async fn handle_connection(
+    mut tcpstream: TcpStream,
+    readings: Arc<Mutex<ReadingMap>>,
+    dispatchers: Arc<Mutex<DispatcherMap>>,
+    mut sender: Sender<Ticket>,
+    mut receiver: Receiver<Ticket>,
+) -> io::Result<()> {
+    let iam = ClientType::Unknown;
+
+    let client_messages = message_stream(&mut tcpstream);
+    pin_mut!(client_messages);
+
+    tokio::select! {
+        result = client_messages.next() => {
+        },
+        event = receiver.recv() => {
+        }
+    }
+
     Ok(())
+}
+
+fn message_stream(
+    tcpstream: &mut TcpStream,
+) -> impl Stream<Item = Result<DecodedMsg, DecodeError>> + '_ {
+    let mut buffer = Vec::new();
+    try_stream! {
+        loop {
+            let result = speed::decode_msg(&buffer);
+            match result {
+                Ok(msg) => { yield msg; }
+                Err(speed::DecodeError::TooShort) => {
+                    let read_bytes = tcpstream.read_buf(&mut buffer).await?;
+                    if read_bytes == 0 {
+                        break;
+                    }
+                },
+                error => { error?; }
+            }
+        }
+    }
 }

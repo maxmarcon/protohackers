@@ -2,31 +2,64 @@ use std::array::TryFromSliceError;
 use std::io;
 
 #[derive(Debug)]
-pub enum Error {
-    InvalidMsg,
+pub enum DecodeError {
+    TooShort,
+    Unknown,
     IOError(io::Error),
 }
 
-impl From<TryFromSliceError> for Error {
-    fn from(_value: TryFromSliceError) -> Self {
-        Error::InvalidMsg
+impl From<TryFromSliceError> for DecodeError {
+    fn from(_error: TryFromSliceError) -> Self {
+        DecodeError::TooShort
     }
 }
 
-pub mod Msg {
+impl From<io::Error> for DecodeError {
+    fn from(error: io::Error) -> Self {
+        DecodeError::IOError(error)
+    }
+}
+
+pub enum DecodedMsg {
+    Plate(msg::Plate),
+    WantHeartbeat(msg::WantHeartbeat),
+    IAmCamera(msg::IAmCamera),
+    IAmDispatcher(msg::IAmDispatcher),
+}
+
+pub fn decode_msg(bytes: &[u8]) -> Result<DecodedMsg, DecodeError> {
+    if bytes.is_empty() {
+        return Err(DecodeError::TooShort);
+    }
+    match bytes[0] {
+        msg::Plate::CODE => msg::Plate::decode(&bytes[1..]).map(DecodedMsg::Plate),
+        msg::WantHeartbeat::CODE => {
+            msg::WantHeartbeat::decode(&bytes[1..]).map(DecodedMsg::WantHeartbeat)
+        }
+        msg::IAmCamera::CODE => msg::IAmCamera::decode(&bytes[1..]).map(DecodedMsg::IAmCamera),
+        msg::IAmDispatcher::CODE => {
+            msg::IAmDispatcher::decode(&bytes[1..]).map(DecodedMsg::IAmDispatcher)
+        }
+        _ => Err(DecodeError::Unknown),
+    }
+}
+
+pub mod msg {
+    use crate::speed::DecodeError;
+
     pub fn encode_str(msg: &str) -> Vec<u8> {
         let mut bytes = Vec::from([msg.len() as u8]);
         bytes.append(&mut Vec::from(msg.as_bytes()));
         bytes
     }
 
-    pub fn decode_str(bytes: &[u8]) -> Result<(String, &[u8]), super::Error> {
+    pub fn decode_str(bytes: &[u8]) -> Result<(String, &[u8]), super::DecodeError> {
         if bytes.is_empty() {
-            return Err(super::Error::InvalidMsg);
+            return Err(super::DecodeError::TooShort);
         }
         let strlen = bytes[0] as usize;
         if bytes.len() < strlen + 1 {
-            return Err(super::Error::InvalidMsg);
+            return Err(super::DecodeError::TooShort);
         }
         Ok((
             String::from_utf8_lossy(&bytes[1..strlen + 1]).into(),
@@ -34,22 +67,22 @@ pub mod Msg {
         ))
     }
 
-    pub fn decode_u16(bytes: &[u8]) -> Result<(u16, &[u8]), super::Error> {
+    pub fn decode_u16(bytes: &[u8]) -> Result<(u16, &[u8]), super::DecodeError> {
         let val = u16::from_be_bytes(bytes.try_into()?);
         Ok((val, &bytes[4..]))
     }
 
-    pub fn decode_u32(bytes: &[u8]) -> Result<(u32, &[u8]), super::Error> {
+    pub fn decode_u32(bytes: &[u8]) -> Result<(u32, &[u8]), super::DecodeError> {
         let val = u32::from_be_bytes(bytes.try_into()?);
         Ok((val, &bytes[4..]))
     }
 
-    struct Error {
+    pub struct Error {
         msg: String,
     }
 
     impl Error {
-        const CODE: u8 = 0x10;
+        pub const CODE: u8 = 0x10;
 
         pub fn new(msg: String) -> Self {
             Self { msg }
@@ -63,22 +96,23 @@ pub mod Msg {
         }
     }
 
-    struct Plate {
+    pub struct Plate {
         plate: String,
         ts: u32,
     }
 
     impl Plate {
-        const CODE: u8 = 0x20;
+        pub const CODE: u8 = 0x20;
 
-        pub fn decode(bytes: &[u8]) -> Result<Self, super::Error> {
+        pub fn decode(bytes: &[u8]) -> Result<Self, super::DecodeError> {
             let (plate, bytes) = decode_str(bytes)?;
             let (ts, _) = decode_u32(bytes)?;
             Ok(Self { plate, ts })
         }
     }
 
-    struct Ticket {
+    #[derive(Clone)]
+    pub struct Ticket {
         plate: String,
         road: u16,
         mile1: u16,
@@ -89,7 +123,7 @@ pub mod Msg {
     }
 
     impl Ticket {
-        const CODE: u8 = 0x21;
+        pub const CODE: u8 = 0x21;
 
         pub fn new(
             plate: String,
@@ -124,71 +158,71 @@ pub mod Msg {
         }
     }
 
-    struct WantHeartbeat {
+    pub struct WantHeartbeat {
         interval: u32,
     }
 
     impl WantHeartbeat {
-        const CODE: u8 = 0x40;
+        pub const CODE: u8 = 0x40;
 
         pub fn new(interval: u32) -> Self {
             Self { interval }
         }
 
-        pub fn encode(&self) -> Vec<u8> {
-            let mut bytes = Vec::from([WantHeartbeat::CODE]);
-            bytes.append(&mut self.interval.to_be_bytes().to_vec());
-            bytes
+        pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+            let (interval, _) = decode_u32(bytes)?;
+            Ok(Self { interval })
         }
     }
 
-    struct Heartbeat {}
+    pub struct Heartbeat {}
 
     impl Heartbeat {
-        const CODE: u8 = 0x41;
+        pub const CODE: u8 = 0x41;
 
         pub fn encode() -> Vec<u8> {
             Vec::from([Heartbeat::CODE])
         }
     }
 
-    struct IAmCamera {
+    pub struct IAmCamera {
         road: u16,
         mile: u16,
         limit: u16,
     }
 
     impl IAmCamera {
-        const CODE: u8 = 0x80;
+        pub const CODE: u8 = 0x80;
 
         pub fn new(road: u16, mile: u16, limit: u16) -> Self {
             Self { road, mile, limit }
         }
 
-        pub fn encode(&self) -> Vec<u8> {
-            let mut bytes = Vec::from([IAmCamera::CODE]);
-            bytes.append(&mut self.road.to_be_bytes().to_vec());
-            bytes.append(&mut self.mile.to_be_bytes().to_vec());
-            bytes.append(&mut self.limit.to_be_bytes().to_vec());
-            bytes
+        pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+            let (road, bytes) = decode_u16(bytes)?;
+            let (mile, bytes) = decode_u16(bytes)?;
+            let (limit, _bytes) = decode_u16(bytes)?;
+            Ok(Self { road, mile, limit })
         }
     }
 
-    struct IAmDispatcher {
+    pub struct IAmDispatcher {
         roads: Vec<u16>,
     }
 
     impl IAmDispatcher {
-        const CODE: u8 = 0x81;
+        pub const CODE: u8 = 0x81;
 
-        pub fn decode(bytes: &[u8]) -> Result<Self, super::Error> {
+        pub fn decode(bytes: &[u8]) -> Result<Self, super::DecodeError> {
             if bytes.is_empty() {
-                return Err(super::Error::InvalidMsg);
+                return Err(super::DecodeError::TooShort);
             }
             let numroads = bytes[0] as usize;
             let mut roads = Vec::with_capacity(numroads);
-            for _ in (0..numroads) {
-                let (road, rest) = decode_u16(bytes)?;
+            let mut bytes = bytes;
+            let mut road;
+            for _ in 0..numroads {
+                (road, bytes) = decode_u16(bytes)?;
                 roads.push(road);
             }
             Ok(Self { roads: roads })
