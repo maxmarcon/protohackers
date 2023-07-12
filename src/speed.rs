@@ -27,6 +27,17 @@ pub enum DecodedMsg {
     IAmDispatcher(msg::IAmDispatcher),
 }
 
+impl DecodedMsg {
+    pub fn len(&self) -> usize {
+        match self {
+            DecodedMsg::Plate(plate_msg) => plate_msg.len(),
+            DecodedMsg::WantHeartbeat(_) => 5,
+            DecodedMsg::IAmCamera(_) => 7,
+            DecodedMsg::IAmDispatcher(dispatcher_msg) => dispatcher_msg.len(),
+        }
+    }
+}
+
 pub fn decode_msg(bytes: &[u8]) -> Result<DecodedMsg, DecodeError> {
     if bytes.is_empty() {
         return Err(DecodeError::TooShort);
@@ -84,8 +95,10 @@ pub mod msg {
     impl Error {
         pub const CODE: u8 = 0x10;
 
-        pub fn new(msg: String) -> Self {
-            Self { msg }
+        pub fn new(msg: &str) -> Self {
+            Self {
+                msg: msg.to_owned(),
+            }
         }
 
         pub fn encode(&self) -> Vec<u8> {
@@ -108,6 +121,10 @@ pub mod msg {
             let (plate, bytes) = decode_str(bytes)?;
             let (ts, _) = decode_u32(bytes)?;
             Ok(Self { plate, ts })
+        }
+
+        pub fn len(&self) -> usize {
+            self.plate.len() + 6
         }
     }
 
@@ -186,9 +203,9 @@ pub mod msg {
     }
 
     pub struct IAmCamera {
-        road: u16,
-        mile: u16,
-        limit: u16,
+        pub road: u16,
+        pub mile: u16,
+        pub limit: u16,
     }
 
     impl IAmCamera {
@@ -207,7 +224,7 @@ pub mod msg {
     }
 
     pub struct IAmDispatcher {
-        roads: Vec<u16>,
+        pub roads: Vec<u16>,
     }
 
     impl IAmDispatcher {
@@ -226,6 +243,10 @@ pub mod msg {
                 roads.push(road);
             }
             Ok(Self { roads: roads })
+        }
+
+        pub fn len(&self) -> usize {
+            self.roads.len() * 2 + 2
         }
     }
 }

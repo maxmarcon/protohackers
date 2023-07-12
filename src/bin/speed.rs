@@ -5,21 +5,34 @@ use futures::StreamExt;
 use futures::{pin_mut, Stream};
 use protohackers::speed;
 use protohackers::speed::msg::Ticket;
-use protohackers::speed::{DecodeError, DecodedMsg};
+use protohackers::speed::{msg, DecodeError, DecodedMsg};
 use protohackers::{CliArgs, Parser, Server};
 use std::collections::{BTreeMap, HashMap};
 use std::io;
-use std::io::Read;
+use std::io::{Error, Read};
 use std::sync::{Arc, Mutex};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::OwnedReadHalf;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::{Receiver, Sender};
 
 enum ClientType {
-    Camera,
-    Dispatcher,
+    Camera((u16, u16, u16)),
+    Dispatcher(u16),
     Unknown,
+}
+
+enum ProcessingError {
+    InvalidRequest,
+    IOError(io::Error),
+}
+
+impl From<io::Error> for ProcessingError {
+    fn from(error: Error) -> Self {
+        ProcessingError::IOError(error)
+    }
 }
 
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
@@ -66,6 +79,7 @@ type DispatcherMap = HashMap<u16, Vec<u16>>;
 fn main() {
     let readings = Arc::new(Mutex::new(BTreeMap::new()));
 
+    let dispatcher_id = Arc::new(Mutex::new(1_u16));
     let dispatchers = Arc::new(Mutex::new(HashMap::new()));
 
     let (sender, _receiver) = broadcast::channel(100);
@@ -75,10 +89,12 @@ fn main() {
         let readings = readings.clone();
         let dispatchers = dispatchers.clone();
         let sender = sender.clone();
+        let dispacher_id = dispatcher_id.clone();
         Box::pin(async move {
             handle_connection(
                 tcpstream,
                 readings,
+                dispacher_id,
                 dispatchers,
                 sender.clone(),
                 sender.subscribe(),
@@ -95,19 +111,39 @@ fn main() {
 async fn handle_connection(
     mut tcpstream: TcpStream,
     readings: Arc<Mutex<ReadingMap>>,
+    dispatcher_id: Arc<Mutex<u16>>,
     dispatchers: Arc<Mutex<DispatcherMap>>,
     mut sender: Sender<Ticket>,
     mut receiver: Receiver<Ticket>,
 ) -> io::Result<()> {
-    let iam = ClientType::Unknown;
+    let mut me = ClientType::Unknown;
 
-    let client_messages = message_stream(&mut tcpstream);
+    let (mut tcp_reader, mut tcp_writer) = tcpstream.into_split();
+    let client_messages = message_stream(&mut tcp_reader);
     pin_mut!(client_messages);
 
-    tokio::select! {
-        result = client_messages.next() => {
-        },
-        event = receiver.recv() => {
+    loop {
+        tokio::select! {
+            result = client_messages.next() => {
+                if result.is_none() {
+                    break;
+                }
+                match result.unwrap() {
+                    Err(DecodeError::TooShort) => (),
+                    Err(DecodeError::Unknown) => {
+                        tcp_writer.write_all(msg::Error::new("unknown message").encode().as_slice()).await?;
+                    },
+                    Err(DecodeError::IOError(io_error)) => return Err(io_error),
+                    Ok(decoded_msg) => if let Err(error) = process_message(decoded_msg, &mut tcp_writer, &readings,&dispatcher_id, &dispatchers, &mut sender, &mut me).await {
+                        match error {
+                            ProcessingError::InvalidRequest => break,
+                            ProcessingError::IOError(io_error) => return Err(io_error)
+                        }
+                    }
+                }
+            },
+            event = receiver.recv() => {
+            }
         }
     }
 
@@ -115,14 +151,17 @@ async fn handle_connection(
 }
 
 fn message_stream(
-    tcpstream: &mut TcpStream,
+    tcpstream: &mut OwnedReadHalf,
 ) -> impl Stream<Item = Result<DecodedMsg, DecodeError>> + '_ {
     let mut buffer = Vec::new();
     try_stream! {
         loop {
             let result = speed::decode_msg(&buffer);
             match result {
-                Ok(msg) => { yield msg; }
+                Ok(msg) => {
+                    buffer.drain(..msg.len());
+                    yield msg;
+                },
                 Err(speed::DecodeError::TooShort) => {
                     let read_bytes = tcpstream.read_buf(&mut buffer).await?;
                     if read_bytes == 0 {
@@ -133,4 +172,49 @@ fn message_stream(
             }
         }
     }
+}
+
+async fn process_message(
+    message: DecodedMsg,
+    tcpstream: &mut OwnedWriteHalf,
+    readings: &Arc<Mutex<ReadingMap>>,
+    dispatcher_id: &Arc<Mutex<u16>>,
+    dispatchers: &Arc<Mutex<DispatcherMap>>,
+    sender: &mut Sender<Ticket>,
+    me: &mut ClientType,
+) -> Result<(), ProcessingError> {
+    match message {
+        DecodedMsg::IAmCamera(iam_camera) => match me {
+            ClientType::Unknown => {
+                *me = ClientType::Camera((iam_camera.road, iam_camera.mile, iam_camera.limit))
+            }
+            _ => {
+                tcpstream
+                    .write_all(msg::Error::new("invalid request").encode().as_slice())
+                    .await?
+            }
+        },
+        DecodedMsg::IAmDispatcher(iam_dispatcher) => match me {
+            ClientType::Unknown => {
+                let mut this_dispatcher = dispatcher_id.lock().unwrap();
+                *me = ClientType::Dispatcher(*this_dispatcher);
+                *this_dispatcher += 1;
+                let mut dispatchers = dispatchers.lock().unwrap();
+                for road in iam_dispatcher.roads {
+                    dispatchers
+                        .entry(road)
+                        .and_modify(|dispatchers_vec| dispatchers_vec.push(*this_dispatcher))
+                        .or_insert(Vec::from([*this_dispatcher]));
+                }
+            }
+            _ => {
+                tcpstream
+                    .write_all(msg::Error::new("invalid request").encode().as_slice())
+                    .await?
+            }
+        },
+        _ => (),
+    };
+
+    Ok(())
 }
