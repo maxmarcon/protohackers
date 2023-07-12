@@ -1,5 +1,6 @@
 mod async_lib;
 pub mod budgetchat;
+pub mod speed;
 
 pub use clap::Parser;
 use std::collections::HashMap;

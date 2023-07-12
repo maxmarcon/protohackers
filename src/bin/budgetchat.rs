@@ -26,7 +26,7 @@ fn main() {
             let sender = sender.clone();
             let receiver = sender.subscribe();
             let users = users.clone();
-            Box::pin(async move {
+            Box::pin(async {
                 handle_stream(tcp_stream, sender, receiver, users)
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
