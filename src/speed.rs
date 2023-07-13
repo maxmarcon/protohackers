@@ -21,6 +21,7 @@ impl From<io::Error> for DecodeError {
     }
 }
 
+#[derive(Debug)]
 pub enum DecodedMsg {
     Plate(msg::Plate),
     WantHeartbeat(msg::WantHeartbeat),

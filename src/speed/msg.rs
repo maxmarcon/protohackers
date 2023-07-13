@@ -22,7 +22,7 @@ pub fn decode_str(bytes: &[u8]) -> Result<(String, &[u8]), super::DecodeError> {
 
 pub fn decode_u16(bytes: &[u8]) -> Result<(u16, &[u8]), super::DecodeError> {
     let val = u16::from_be_bytes(bytes.try_into()?);
-    Ok((val, &bytes[4..]))
+    Ok((val, &bytes[2..]))
 }
 
 pub fn decode_u32(bytes: &[u8]) -> Result<(u32, &[u8]), super::DecodeError> {
@@ -51,6 +51,7 @@ impl Error {
     }
 }
 
+#[derive(Debug)]
 pub struct Plate {
     pub plate: String,
     pub ts: u32,
@@ -117,6 +118,7 @@ impl Ticket {
     }
 }
 
+#[derive(Debug)]
 pub struct WantHeartbeat {
     pub interval: u32,
 }
@@ -144,6 +146,7 @@ impl Heartbeat {
     }
 }
 
+#[derive(Debug)]
 pub struct IAmCamera {
     pub road: u16,
     pub mile: u16,
@@ -165,6 +168,7 @@ impl IAmCamera {
     }
 }
 
+#[derive(Debug)]
 pub struct IAmDispatcher {
     pub roads: Vec<u16>,
 }
