@@ -21,7 +21,7 @@ use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::time;
-use tokio::time::{interval, Interval};
+use tokio::time::Interval;
 
 enum ClientType {
     Camera(u16, u16, u16),
@@ -173,7 +173,7 @@ async fn processing_loop(
     let client_messages = message_stream(&mut tcp_reader);
     pin_mut!(client_messages);
 
-    let mut heartbeat_interval = interval(Duration::MAX);
+    let mut heartbeat_interval: Option<Interval> = None;
 
     // ticket for roads with no dispatchers - waiting to be delivered when a dispatcher connects;
     let mut ticket_backlog: Vec<msg::Ticket> = Vec::new();
@@ -215,7 +215,7 @@ async fn processing_loop(
                 let event = event.unwrap();
                 process_event(event, me, &mut tcp_writer, &mut sender, &mut ticket_backlog).await?;
             },
-            _ = heartbeat_interval.tick() => {
+            _ = async { heartbeat_interval.as_mut().unwrap().tick().await }, if heartbeat_interval.is_some() => {
                 tcp_writer.write_all(msg::Heartbeat::encode().as_slice()).await?
             }
         }
@@ -256,7 +256,7 @@ async fn process_message(
     dispatchers: &Arc<Mutex<DispatcherMap>>,
     sender: &mut Sender<event::Event>,
     me: &mut ClientType,
-    heartbeat_interval: &mut Interval,
+    heartbeat_interval: &mut Option<Interval>,
     ticket_backlog: &mut Vec<msg::Ticket>,
     car_tickets: &Arc<Mutex<HashMap<String, HashSet<u32>>>>,
 ) -> Result<(), ProcessingError> {
@@ -312,16 +312,16 @@ async fn process_message(
             }
         }
         DecodedMsg::WantHeartbeat(want_heartbeat) => {
-            if heartbeat_interval.period() != Duration::MAX {
+            if heartbeat_interval.is_some() {
                 tcpstream
                     .write_all(msg::Error::new("heartbeat already set").encode().as_slice())
                     .await?;
                 return Err(ProcessingError::InvalidRequest);
             }
             if want_heartbeat.interval > 0 {
-                *heartbeat_interval = time::interval(Duration::from_secs_f32(
+                *heartbeat_interval = Some(time::interval(Duration::from_secs_f32(
                     want_heartbeat.interval as f32 / 10_f32,
-                ));
+                )));
             }
         }
         DecodedMsg::IAmCamera(iam_camera) => match me {
