@@ -12,6 +12,7 @@ use protohackers::{CliArgs, Parser, Server};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::io::Error;
+use std::ops::Bound::{Excluded, Unbounded};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -42,7 +43,7 @@ impl From<io::Error> for ProcessingError {
     }
 }
 
-#[derive(Ord, PartialOrd, Eq, PartialEq, Clone)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Debug)]
 struct Reading {
     pub plate: String,
     pub road: u16,
@@ -60,13 +61,19 @@ impl Reading {
         limit: u16,
     ) -> Option<(&'a Reading, &'a Reading, u16)> {
         let new_mile = *reading_map.get(new_reading).unwrap();
-        if let Some((prev_reading, prev_mile)) = reading_map.range(..=new_reading).rev().next() {
+        if let Some((prev_reading, prev_mile)) = reading_map
+            .range((Unbounded, Excluded(new_reading)))
+            .rev()
+            .next()
+        {
             let speed = Reading::avg_speed((prev_reading, *prev_mile), (new_reading, new_mile));
             if speed > limit as f32 {
                 return Some((prev_reading, new_reading, speed as u16));
             }
         }
-        if let Some((next_reading, next_mile)) = reading_map.range(new_reading..).next() {
+        if let Some((next_reading, next_mile)) =
+            reading_map.range((Excluded(new_reading), Unbounded)).next()
+        {
             let speed = Reading::avg_speed((new_reading, new_mile), (next_reading, *next_mile));
             if speed > limit as f32 {
                 return Some((new_reading, next_reading, speed as u16));
@@ -76,7 +83,7 @@ impl Reading {
     }
 
     pub fn avg_speed(from: (&Reading, u16), to: (&Reading, u16)) -> f32 {
-        (to.1 - from.1) as f32 / (to.0.ts - from.0.ts) as f32
+        3600.0 * (to.1 - from.1) as f32 / (to.0.ts - from.0.ts) as f32
     }
 }
 
@@ -230,11 +237,9 @@ fn message_stream(
     try_stream! {
         loop {
             let result = speed::decode_msg(&buffer);
-            println!("decoded: {:?}", result);
             match result {
                 Ok(msg) => {
                     buffer.drain(..msg.len());
-                    println!("received {:?}", msg);
                     yield msg;
                 },
                 Err(speed::DecodeError::TooShort) => {
@@ -291,8 +296,15 @@ async fn process_message(
                     // car wasn't still ticketed on any of the ticket's day - let's issue the ticket
                     let mile1 = *readings.get(from).unwrap();
                     let mile2 = *readings.get(to).unwrap();
-                    let ticket =
-                        msg::Ticket::new(&plate.plate, road, mile1, from.ts, mile2, to.ts, speed);
+                    let ticket = msg::Ticket::new(
+                        &plate.plate,
+                        road,
+                        mile1,
+                        from.ts,
+                        mile2,
+                        to.ts,
+                        speed * 100,
+                    );
                     // find a dispatcher for the ticket
                     let dispatchers = dispatchers.lock().unwrap();
                     if let Some(dispatcher_id) = dispatchers
