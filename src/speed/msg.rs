@@ -52,8 +52,8 @@ impl Error {
 }
 
 pub struct Plate {
-    plate: String,
-    ts: u32,
+    pub plate: String,
+    pub ts: u32,
 }
 
 impl Plate {
@@ -72,20 +72,20 @@ impl Plate {
 
 #[derive(Debug, Clone)]
 pub struct Ticket {
-    plate: String,
-    road: u16,
-    mile1: u16,
-    ts1: u32,
-    mile2: u16,
-    ts2: u32,
-    speed: u16,
+    pub plate: String,
+    pub road: u16,
+    pub mile1: u16,
+    pub ts1: u32,
+    pub mile2: u16,
+    pub ts2: u32,
+    pub speed: u16,
 }
 
 impl Ticket {
     pub const CODE: u8 = 0x21;
 
     pub fn new(
-        plate: String,
+        plate: &str,
         road: u16,
         mile1: u16,
         ts1: u32,
@@ -94,7 +94,7 @@ impl Ticket {
         speed: u16,
     ) -> Self {
         Self {
-            plate,
+            plate: plate.to_owned(),
             road,
             mile1,
             ts1,
@@ -184,7 +184,7 @@ impl IAmDispatcher {
             (road, bytes) = decode_u16(bytes)?;
             roads.push(road);
         }
-        Ok(Self { roads: roads })
+        Ok(Self { roads })
     }
 
     pub fn len(&self) -> usize {
