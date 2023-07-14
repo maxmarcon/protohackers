@@ -5,7 +5,7 @@ pub mod speed;
 pub use clap::Parser;
 use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::thread;
@@ -53,15 +53,11 @@ impl Server {
 
     pub fn serve_udp<F>(&self, handler: &mut F) -> io::Result<()>
     where
-        F: FnMut(&[u8], &UdpSocket, SocketAddr) -> io::Result<()>,
+        F: FnMut(UdpSocket, usize) -> io::Result<()>,
     {
         let socket = UdpSocket::bind(format!("0.0.0.0:{}", self.port))?;
         println!("listening on: {:?}", socket.local_addr()?);
-        let mut buf = vec![0; self.max_udp_size];
-        loop {
-            let (bytes, peer) = socket.recv_from(&mut buf)?;
-            handler(&buf[..bytes], &socket, peer)?;
-        }
+        handler(socket, self.max_udp_size)
     }
 
     pub fn serve<F>(&self, handler: Arc<F>) -> io::Result<()>
