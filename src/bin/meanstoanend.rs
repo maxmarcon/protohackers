@@ -47,46 +47,29 @@ fn main() {
         .unwrap();
 }
 
-const BUFFER_SIZE: usize = 9 * 100;
-
 fn handle_stream(mut tcpstream: TcpStream) -> io::Result<()> {
-    let mut buf = Vec::from([0; BUFFER_SIZE]);
-    let mut write_from = 0;
+    let mut buf = Vec::from([0; 9]);
 
     let mut prices = BTreeMap::<i32, i32>::new();
 
     loop {
-        let read = tcpstream.read(&mut buf[write_from..]).unwrap();
-        if read == 0 {
-            break;
-        }
-        write_from += read;
-
-        while write_from >= 9 {
-            let message = match parse_message(&buf[..9]) {
-                Ok(message) => message,
-                Err(()) => {
-                    tcpstream.write_all(&[0]).unwrap();
-                    break;
-                }
-            };
-
-            match message {
-                Message::I(Insert { ts, price }) => {
-                    prices.insert(ts, price);
-                }
-                Message::Q(Query { mints, maxts }) => {
-                    let mean = get_mean_price(&prices, mints, maxts);
-                    tcpstream.write_all(&mean.to_be_bytes()).unwrap();
-                }
+        tcpstream.read_exact(&mut buf)?;
+        let message = match parse_message(&buf[..9]) {
+            Ok(message) => message,
+            Err(()) => {
+                tcpstream.write_all(&[0]).unwrap();
+                break;
             }
+        };
 
-            buf.drain(..9);
-            write_from -= 9;
-        }
-
-        if buf.is_empty() {
-            buf = Vec::from([0; BUFFER_SIZE]);
+        match message {
+            Message::I(Insert { ts, price }) => {
+                prices.insert(ts, price);
+            }
+            Message::Q(Query { mints, maxts }) => {
+                let mean = get_mean_price(&prices, mints, maxts);
+                tcpstream.write_all(&mean.to_be_bytes()).unwrap();
+            }
         }
     }
     Ok(())
