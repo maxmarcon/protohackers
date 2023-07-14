@@ -55,30 +55,44 @@ impl Reading {
         Self { ts, mile }
     }
 
-    pub fn check_violation<'a>(
+    pub fn make_tickets<'a>(
         reading_map: &'a BTreeSet<Reading>,
         new_reading: &'a Reading,
         limit: u16,
-    ) -> Option<(&'a Reading, &'a Reading, f32)> {
+        road: u16,
+        plate: &str,
+    ) -> Vec<msg::Ticket> {
         let earlier_reading = reading_map
             .range((Unbounded, Excluded(new_reading)))
             .rev()
             .next();
         let later_reading = reading_map.range((Excluded(new_reading), Unbounded)).next();
-        let other_reading = earlier_reading.or(later_reading);
 
-        other_reading.and_then(|other_reading| {
-            let speed = Reading::avg_speed(new_reading, other_reading);
-            if speed > limit as f32 {
-                Some((
-                    min(new_reading, other_reading),
-                    max(new_reading, other_reading),
-                    speed,
-                ))
-            } else {
-                None
-            }
-        })
+        [earlier_reading, later_reading]
+            .iter()
+            .flat_map(|other_reading| {
+                other_reading.map(|other_reading| {
+                    let speed = Reading::avg_speed(new_reading, other_reading);
+                    if speed > limit as f32 {
+                        let reading1 = min(new_reading, other_reading);
+                        let reading2 = max(new_reading, other_reading);
+
+                        Some(msg::Ticket::new(
+                            plate,
+                            road,
+                            reading1.mile,
+                            reading1.ts,
+                            reading2.mile,
+                            reading2.ts,
+                            (speed * 100.0) as u16,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .flatten()
+            .collect()
     }
 
     pub fn avg_speed(reading_1: &Reading, reading_2: &Reading) -> f32 {
@@ -102,11 +116,11 @@ type TicketRecord = HashMap<String, HashSet<u32>>;
 fn main() {
     let readings = Arc::new(Mutex::new(HashMap::new()));
 
-    let dispatcher_id = Arc::new(Mutex::new(1_u16));
+    let dispatcher_id = Arc::new(Mutex::new(0_u16));
     let dispatchers = Arc::new(Mutex::new(HashMap::new()));
     let car_tickets = Arc::new(Mutex::new(HashMap::new()));
 
-    let (sender, _receiver) = broadcast::channel(256);
+    let (sender, _receiver) = broadcast::channel(10_000);
     let args = CliArgs::parse();
 
     let handler: Arc<_> = Arc::new(move |tcpstream| -> BoxFuture<'static, io::Result<()>> {
@@ -206,7 +220,8 @@ async fn processing_loop(
                         process_message(
                             decoded_msg,
                             &mut tcp_writer,
-                            &readings,&dispatcher_id,
+                            &readings,
+                            &dispatcher_id,
                             dispatchers,
                             &mut sender,
                             me,
@@ -246,7 +261,7 @@ fn message_stream(
             let result = speed::decode_msg(&buffer);
             match result {
                 Ok(msg) => {
-                    buffer.drain(..msg.len());
+                    buffer.drain(..msg.size());
                     yield msg;
                 },
                 Err(speed::DecodeError::TooShort) => {
@@ -295,19 +310,13 @@ async fn process_message(
             let mut all_readings = readings.lock().unwrap();
             let car_readings = all_readings.entry((plate.plate.clone(), road)).or_default();
             car_readings.insert(new_reading.clone());
+            println!("CAR {}\nLIMIT {}\nREADINGS:", plate.plate, limit);
+            print_readings(car_readings);
 
-            if let Some((from, to, speed)) =
-                Reading::check_violation(car_readings, &new_reading, limit)
+            for ticket in
+                Reading::make_tickets(car_readings, &new_reading, limit, road, &plate.plate)
             {
-                let ticket = msg::Ticket::new(
-                    &plate.plate,
-                    road,
-                    from.mile,
-                    from.ts,
-                    to.mile,
-                    to.ts,
-                    (speed * 100.0) as u16,
-                );
+                println!("TICKET!!! -- {:?} -- ON DAYS: {:?}", ticket, ticket.days());
 
                 let mut ticket_record = ticket_record.lock().unwrap();
                 let car_ticket_days = ticket_record.entry(plate.plate.clone()).or_default();
@@ -323,10 +332,17 @@ async fn process_message(
                         // a dispatcher is online - send ticket
                         ticket.record(car_ticket_days);
                         sender.send(Event::Ticket(ticket, *dispatcher_id)).unwrap();
+                        println!("TICKET SENT");
                     } else {
                         // no dispatcher online - store ticket
                         ticket_backlog.push(ticket);
+                        println!("TICKET SAVED");
                     }
+                } else {
+                    println!(
+                        "TICKET NOT SENT BECAUSE CARS TICKETED ON: {:?}",
+                        car_ticket_days
+                    );
                 }
             }
         }
@@ -359,22 +375,25 @@ async fn process_message(
         },
         DecodedMsg::IAmDispatcher(iam_dispatcher) => match me {
             ClientType::Unknown => {
-                let mut this_dispatcher = dispatcher_id.lock().unwrap();
-                *me = ClientType::Dispatcher(*this_dispatcher, iam_dispatcher.roads.clone());
+                let my_dispatcher_id = {
+                    let mut this_dispatcher = dispatcher_id.lock().unwrap();
+                    *this_dispatcher += 1;
+                    *this_dispatcher
+                };
+                *me = ClientType::Dispatcher(my_dispatcher_id, iam_dispatcher.roads.clone());
                 let mut dispatchers = dispatchers.lock().unwrap();
                 for &road in iam_dispatcher.roads.iter() {
                     dispatchers
                         .entry(road)
                         .or_default()
-                        .insert(*this_dispatcher);
+                        .insert(my_dispatcher_id);
                 }
                 sender
                     .send(event::Event::NewDispatcher(
-                        *this_dispatcher,
+                        my_dispatcher_id,
                         iam_dispatcher.roads.clone(),
                     ))
                     .unwrap();
-                *this_dispatcher += 1;
             }
             _ => {
                 tcpstream
@@ -424,4 +443,15 @@ async fn process_event(
     }
 
     Ok(())
+}
+
+fn print_readings(readings: &BTreeSet<Reading>) {
+    let mut iter = readings.iter().peekable();
+    while let Some(r1) = iter.next() {
+        print!("{:?}", r1);
+        if let Some(&r2) = iter.peek() {
+            print!(" --> {}", Reading::avg_speed(r1, r2))
+        }
+        println!();
+    }
 }

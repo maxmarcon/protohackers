@@ -71,7 +71,7 @@ impl Plate {
         Ok(Self { plate, ts })
     }
 
-    pub fn len(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.plate.len() + 6
     }
 }
@@ -132,7 +132,7 @@ impl Ticket {
         })
     }
 
-    fn days(&self) -> RangeInclusive<u32> {
+    pub fn days(&self) -> RangeInclusive<u32> {
         self.ts1 / 86400..=self.ts2 / 86400
     }
 }
@@ -209,7 +209,7 @@ impl IAmDispatcher {
         Ok(Self { roads })
     }
 
-    pub fn len(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.roads.len() * 2 + 2
     }
 }

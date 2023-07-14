@@ -32,12 +32,12 @@ pub enum DecodedMsg {
 }
 
 impl DecodedMsg {
-    pub fn len(&self) -> usize {
+    pub fn size(&self) -> usize {
         match self {
-            DecodedMsg::Plate(plate_msg) => plate_msg.len(),
+            DecodedMsg::Plate(plate_msg) => plate_msg.size(),
             DecodedMsg::WantHeartbeat(_) => 5,
             DecodedMsg::IAmCamera(_) => 7,
-            DecodedMsg::IAmDispatcher(dispatcher_msg) => dispatcher_msg.len(),
+            DecodedMsg::IAmDispatcher(dispatcher_msg) => dispatcher_msg.size(),
             DecodedMsg::Unknown => 0,
         }
     }
