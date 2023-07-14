@@ -1,4 +1,6 @@
 use crate::speed::DecodeError;
+use std::collections::HashSet;
+use std::ops::RangeInclusive;
 
 pub fn encode_str(msg: &str) -> Vec<u8> {
     let mut bytes = Vec::from([msg.len() as u8]);
@@ -118,6 +120,20 @@ impl Ticket {
         bytes.append(&mut self.ts2.to_be_bytes().to_vec());
         bytes.append(&mut self.speed.to_be_bytes().to_vec());
         bytes
+    }
+
+    pub fn overlaps(&self, days: &HashSet<u32>) -> bool {
+        self.days().any(|day| days.contains(&day))
+    }
+
+    pub fn record(&self, days: &mut HashSet<u32>) {
+        self.days().for_each(|day| {
+            days.insert(day);
+        })
+    }
+
+    fn days(&self) -> RangeInclusive<u32> {
+        self.ts1 / 86400..=self.ts2 / 86400
     }
 }
 

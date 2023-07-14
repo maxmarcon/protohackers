@@ -9,7 +9,7 @@ use protohackers::speed::event::Event;
 use protohackers::speed::msg;
 use protohackers::speed::{DecodeError, DecodedMsg};
 use protohackers::{CliArgs, Parser, Server};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io;
 use std::io::Error;
 use std::ops::Bound::{Excluded, Unbounded};
@@ -45,36 +45,32 @@ impl From<io::Error> for ProcessingError {
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Debug)]
 struct Reading {
-    pub plate: String,
-    pub road: u16,
     pub ts: u32,
+    pub mile: u16,
 }
 
 impl Reading {
-    pub fn new(plate: String, road: u16, ts: u32) -> Self {
-        Self { plate, road, ts }
+    pub fn new(ts: u32, mile: u16) -> Self {
+        Self { ts, mile }
     }
 
     pub fn check_violation<'a>(
-        reading_map: &'a ReadingMap,
+        reading_map: &'a BTreeSet<Reading>,
         new_reading: &'a Reading,
         limit: u16,
     ) -> Option<(&'a Reading, &'a Reading, u16)> {
-        let new_mile = *reading_map.get(new_reading).unwrap();
-        if let Some((prev_reading, prev_mile)) = reading_map
+        if let Some(prev_reading) = reading_map
             .range((Unbounded, Excluded(new_reading)))
             .rev()
             .next()
         {
-            let speed = Reading::avg_speed((prev_reading, *prev_mile), (new_reading, new_mile));
+            let speed = Reading::avg_speed(prev_reading, new_reading);
             if speed > limit as f32 {
                 return Some((prev_reading, new_reading, speed as u16));
             }
         }
-        if let Some((next_reading, next_mile)) =
-            reading_map.range((Excluded(new_reading), Unbounded)).next()
-        {
-            let speed = Reading::avg_speed((new_reading, new_mile), (next_reading, *next_mile));
+        if let Some(next_reading) = reading_map.range((Excluded(new_reading), Unbounded)).next() {
+            let speed = Reading::avg_speed(new_reading, next_reading);
             if speed > limit as f32 {
                 return Some((new_reading, next_reading, speed as u16));
             }
@@ -82,24 +78,28 @@ impl Reading {
         None
     }
 
-    pub fn avg_speed(from: (&Reading, u16), to: (&Reading, u16)) -> f32 {
-        3600.0 * (to.1 - from.1) as f32 / (to.0.ts - from.0.ts) as f32
+    pub fn avg_speed(from: &Reading, to: &Reading) -> f32 {
+        println!("avg_speed from: {:?} to: {:?}", from, to);
+        3600.0 * (to.mile - from.mile) as f32 / (to.ts - from.ts) as f32
     }
 }
 
 // maps a reading to the recorded miles
-type ReadingMap = BTreeMap<Reading, u16>;
+// plate, road -> set of readings
+type ReadingMap = HashMap<(String, u16), BTreeSet<Reading>>;
 // maps a road to a set of dispatchers
 type DispatcherMap = HashMap<u16, HashSet<u16>>;
+// tickets
+type TicketRecord = HashMap<String, HashSet<u32>>;
 
 fn main() {
-    let readings = Arc::new(Mutex::new(BTreeMap::new()));
+    let readings = Arc::new(Mutex::new(HashMap::new()));
 
     let dispatcher_id = Arc::new(Mutex::new(1_u16));
     let dispatchers = Arc::new(Mutex::new(HashMap::new()));
     let car_tickets = Arc::new(Mutex::new(HashMap::new()));
 
-    let (sender, _receiver) = broadcast::channel(100);
+    let (sender, _receiver) = broadcast::channel(256);
     let args = CliArgs::parse();
 
     let handler: Arc<_> = Arc::new(move |tcpstream| -> BoxFuture<'static, io::Result<()>> {
@@ -220,7 +220,7 @@ async fn processing_loop(
             },
             event = receiver.recv() => {
                 let event = event.unwrap();
-                process_event(event, me, &mut tcp_writer, &mut sender, &mut ticket_backlog).await?;
+                process_event(event, me, &mut tcp_writer, &mut sender, &mut ticket_backlog, &car_tickets).await?;
             },
             _ = async { heartbeat_interval.as_mut().unwrap().tick().await }, if heartbeat_interval.is_some() => {
                 tcp_writer.write_all(msg::Heartbeat::encode().as_slice()).await?
@@ -253,6 +253,7 @@ fn message_stream(
         }
     }
 }
+
 async fn process_message(
     message: DecodedMsg,
     tcpstream: &mut OwnedWriteHalf,
@@ -263,7 +264,7 @@ async fn process_message(
     me: &mut ClientType,
     heartbeat_interval: &mut Option<Interval>,
     ticket_backlog: &mut Vec<msg::Ticket>,
-    car_tickets: &Arc<Mutex<HashMap<String, HashSet<u32>>>>,
+    ticket_record: &Arc<Mutex<TicketRecord>>,
 ) -> Result<(), ProcessingError> {
     match message {
         DecodedMsg::Unknown => {
@@ -283,28 +284,29 @@ async fn process_message(
                 }
             };
 
-            let mut readings = readings.lock().unwrap();
-            let reading = Reading::new(plate.plate.clone(), road, plate.ts);
-            readings.insert(reading.clone(), mile);
+            let new_reading = Reading::new(plate.ts, mile);
+            let mut all_readings = readings.lock().unwrap();
+            let car_readings = all_readings.entry((plate.plate.clone(), road)).or_default();
+            car_readings.insert(new_reading.clone());
 
-            if let Some((from, to, speed)) = Reading::check_violation(&readings, &reading, limit) {
-                let mut car_tickets = car_tickets.lock().unwrap();
-                let car_days_with_ticket = car_tickets.entry(plate.plate.clone()).or_default();
-                let mut days_of_ticket = from.ts / 86400..=to.ts / 86400;
+            if let Some((from, to, speed)) =
+                Reading::check_violation(car_readings, &new_reading, limit)
+            {
+                let ticket = msg::Ticket::new(
+                    &plate.plate,
+                    road,
+                    from.mile,
+                    from.ts,
+                    to.mile,
+                    to.ts,
+                    speed * 100,
+                );
 
-                if !days_of_ticket.any(|day| car_days_with_ticket.contains(&day)) {
+                let mut ticket_record = ticket_record.lock().unwrap();
+                let car_ticket_days = ticket_record.entry(plate.plate.clone()).or_default();
+
+                if !ticket.overlaps(car_ticket_days) {
                     // car wasn't still ticketed on any of the ticket's day - let's issue the ticket
-                    let mile1 = *readings.get(from).unwrap();
-                    let mile2 = *readings.get(to).unwrap();
-                    let ticket = msg::Ticket::new(
-                        &plate.plate,
-                        road,
-                        mile1,
-                        from.ts,
-                        mile2,
-                        to.ts,
-                        speed * 100,
-                    );
                     // find a dispatcher for the ticket
                     let dispatchers = dispatchers.lock().unwrap();
                     if let Some(dispatcher_id) = dispatchers
@@ -312,10 +314,8 @@ async fn process_message(
                         .and_then(|dispatchers| dispatchers.iter().next())
                     {
                         // a dispatcher is online - send ticket
+                        ticket.record(car_ticket_days);
                         sender.send(Event::Ticket(ticket, *dispatcher_id)).unwrap();
-                        for day in days_of_ticket {
-                            car_days_with_ticket.insert(day);
-                        }
                     } else {
                         // no dispatcher online - store ticket
                         ticket_backlog.push(ticket);
@@ -390,6 +390,7 @@ async fn process_event(
     tcpstream: &mut OwnedWriteHalf,
     sender: &mut Sender<Event>,
     ticket_backlog: &mut Vec<msg::Ticket>,
+    ticket_record: &Arc<Mutex<TicketRecord>>,
 ) -> io::Result<()> {
     match event {
         Event::Ticket(ticket, target_dispatcher_id) => match *me {
@@ -403,7 +404,12 @@ async fn process_event(
         Event::NewDispatcher(dispatcher_id, roads) => match *me {
             ClientType::Camera(my_road, _, _) if roads.contains(&my_road) => {
                 ticket_backlog.drain(..).for_each(|ticket| {
-                    sender.send(Event::Ticket(ticket, dispatcher_id)).unwrap();
+                    let mut ticket_record = ticket_record.lock().unwrap();
+                    let car_ticket_days = ticket_record.entry(ticket.plate.clone()).or_default();
+                    if !ticket.overlaps(car_ticket_days) {
+                        ticket.record(car_ticket_days);
+                        sender.send(Event::Ticket(ticket, dispatcher_id)).unwrap();
+                    }
                 });
             }
             _ => (),
