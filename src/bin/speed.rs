@@ -9,6 +9,7 @@ use protohackers::speed::event::Event;
 use protohackers::speed::msg;
 use protohackers::speed::{DecodeError, DecodedMsg};
 use protohackers::{CliArgs, Parser, Server};
+use std::cmp::{max, min};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io;
 use std::io::Error;
@@ -58,29 +59,35 @@ impl Reading {
         reading_map: &'a BTreeSet<Reading>,
         new_reading: &'a Reading,
         limit: u16,
-    ) -> Option<(&'a Reading, &'a Reading, u16)> {
-        if let Some(prev_reading) = reading_map
+    ) -> Option<(&'a Reading, &'a Reading, f32)> {
+        let earlier_reading = reading_map
             .range((Unbounded, Excluded(new_reading)))
             .rev()
-            .next()
-        {
-            let speed = Reading::avg_speed(prev_reading, new_reading);
+            .next();
+        let later_reading = reading_map.range((Excluded(new_reading), Unbounded)).next();
+        let other_reading = earlier_reading.or(later_reading);
+
+        other_reading.and_then(|other_reading| {
+            let speed = Reading::avg_speed(new_reading, other_reading);
             if speed > limit as f32 {
-                return Some((prev_reading, new_reading, speed as u16));
+                Some((
+                    min(new_reading, other_reading),
+                    max(new_reading, other_reading),
+                    speed,
+                ))
+            } else {
+                None
             }
-        }
-        if let Some(next_reading) = reading_map.range((Excluded(new_reading), Unbounded)).next() {
-            let speed = Reading::avg_speed(new_reading, next_reading);
-            if speed > limit as f32 {
-                return Some((new_reading, next_reading, speed as u16));
-            }
-        }
-        None
+        })
     }
 
-    pub fn avg_speed(from: &Reading, to: &Reading) -> f32 {
-        println!("avg_speed from: {:?} to: {:?}", from, to);
-        3600.0 * (to.mile - from.mile) as f32 / (to.ts - from.ts) as f32
+    pub fn avg_speed(reading_1: &Reading, reading_2: &Reading) -> f32 {
+        let max_mile = max(reading_1.mile, reading_2.mile);
+        let min_mile = min(reading_1.mile, reading_2.mile);
+        let max_ts = max(reading_1.ts, reading_2.ts);
+        let min_ts = min(reading_1.ts, reading_2.ts);
+
+        3600.0 * (max_mile - min_mile) as f32 / (max_ts - min_ts) as f32
     }
 }
 
@@ -299,7 +306,7 @@ async fn process_message(
                     from.ts,
                     to.mile,
                     to.ts,
-                    speed * 100,
+                    (speed * 100.0) as u16,
                 );
 
                 let mut ticket_record = ticket_record.lock().unwrap();
