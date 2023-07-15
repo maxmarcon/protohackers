@@ -155,6 +155,14 @@ mod tests {
     }
 
     #[test]
+    fn decode_error_2() {
+        let decoded = decode(b"/connect/123\\/33/");
+        assert!(decoded.is_err());
+        let decoded = decoded.unwrap_err();
+        assert!(matches!(decoded, DecodeError::Invalid));
+    }
+
+    #[test]
     fn decode_connect() {
         let decoded = decode(b"/connect/1234567/");
         assert!(decoded.is_ok());
