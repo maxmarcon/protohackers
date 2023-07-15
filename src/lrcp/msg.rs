@@ -118,8 +118,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
             break;
         }
     }
-    let leftover = str.replace("\\\\", "\\").replace("\\/", "/");
-    pieces.push(leftover.as_ref());
+    pieces.push(str);
 
     if pieces.len() < 2 {
         return Err(DecodeError::Invalid);
@@ -135,7 +134,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
         ["data", session, pos, data] => Ok(Decoded::Data(Data::new(
             i32::from_str(session)?,
             i32::from_str(pos)?,
-            data,
+            &data.replace("\\\\", "\\").replace("\\/", "/")
         ))),
         _ => Err(DecodeError::Invalid),
     }
