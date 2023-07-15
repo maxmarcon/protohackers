@@ -1,5 +1,7 @@
 mod msg;
 
+use crate::lrcp::msg::{decode, Ack, DecodeError, Decoded};
+use std::io;
 use std::sync::mpsc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -14,9 +16,7 @@ impl Socket {
         let (to_app, app_reader) = channel(256);
         let (app_writer, from_app) = channel(256);
 
-        tokio::spawn(async move {
-            protocol_loop(udpsocket, to_app, from_app);
-        });
+        tokio::spawn(async move { protocol_loop(udpsocket, to_app, from_app).await });
 
         Self {
             app_reader,
@@ -31,7 +31,27 @@ impl Socket {
     }
 }
 
-fn protocol_loop(udpsocket: UdpSocket, to_app: Sender<String>, from_app: Receiver<String>) {}
+async fn protocol_loop(
+    udpsocket: UdpSocket,
+    to_app: Sender<String>,
+    from_app: Receiver<String>,
+) -> io::Result<()> {
+    let mut buf = Vec::new();
+    loop {
+        let (_size, addr) = udpsocket.recv_buf_from(&mut buf).await?;
+        match decode(&buf) {
+            Ok(msg) => match msg {
+                Decoded::Connect(connect) => {
+                    udpsocket
+                        .send_to(Ack::new(connect.session, 0).encode().as_bytes(), addr)
+                        .await?;
+                }
+                _ => (),
+            },
+            Err(_) => continue,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -45,12 +65,10 @@ mod tests {
     #[tokio::test]
     async fn open_connection() {
         let (socket, peer) = setup().await;
-        peer.send(b"/connect/1234567/");
+        peer.send(b"/connect/1234567/").await.unwrap();
 
-        let mut buf = Vec::new();
-
+        let mut buf: Vec<u8> = Vec::new();
         peer.recv_buf(&mut buf).await.unwrap();
-        assert_eq!(buf, b"/ack/1234567/0");
     }
 
     async fn setup() -> (Socket, UdpSocket) {

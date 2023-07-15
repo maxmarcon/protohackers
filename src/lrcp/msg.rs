@@ -5,7 +5,6 @@ use std::string::FromUtf8Error;
 
 #[derive(Debug)]
 pub enum DecodeError {
-    Unknown,
     Invalid,
     IOError(Error),
     ParseUtf8Error(FromUtf8Error),
@@ -40,7 +39,7 @@ pub enum Decoded {
 
 #[derive(Debug, PartialEq)]
 pub struct Connect {
-    session: i32,
+    pub session: i32,
 }
 
 impl Connect {
@@ -134,7 +133,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
         ["data", session, pos, data] => Ok(Decoded::Data(Data::new(
             i32::from_str(session)?,
             i32::from_str(pos)?,
-            &data.replace("\\\\", "\\").replace("\\/", "/")
+            &data.replace("\\\\", "\\").replace("\\/", "/"),
         ))),
         _ => Err(DecodeError::Invalid),
     }
