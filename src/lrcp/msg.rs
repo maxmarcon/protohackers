@@ -1,6 +1,3 @@
-use clap::builder::TypedValueParser;
-use regex::{Match, Regex};
-use std::io;
 use std::io::Error;
 use std::num::ParseIntError;
 use std::str::FromStr;
@@ -38,10 +35,11 @@ pub enum Decoded {
     Connect(Connect),
     Close(Close),
     Ack(Ack),
+    Data(Data),
 }
 
 #[derive(Debug, PartialEq)]
-struct Connect {
+pub struct Connect {
     session: i32,
 }
 
@@ -52,7 +50,7 @@ impl Connect {
 }
 
 #[derive(Debug, PartialEq)]
-struct Close {
+pub struct Close {
     session: i32,
 }
 
@@ -67,7 +65,7 @@ impl Close {
 }
 
 #[derive(Debug, PartialEq)]
-struct Ack {
+pub struct Ack {
     session: i32,
     length: i32,
 }
@@ -81,8 +79,32 @@ impl Ack {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct Data {
+    session: i32,
+    pos: i32,
+    data: String,
+}
+impl Data {
+    pub fn new(session: i32, pos: i32, data: &str) -> Self {
+        Self {
+            session,
+            pos,
+            data: data.to_owned(),
+        }
+    }
+    pub fn encode(&self) -> String {
+        format!(
+            "/data/{}/{}/{}/",
+            self.session,
+            self.pos,
+            self.data.replace("\\", "\\\\").replace("/", "\\/")
+        )
+    }
+}
+
 pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
-    let mut str = String::from_utf8(bytes.into())?;
+    let str = String::from_utf8(bytes.into())?;
     if !str.starts_with('/') || !str.ends_with('/') {
         return Err(DecodeError::Invalid);
     }
@@ -90,12 +112,14 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
     let mut str = str.trim_matches('/');
     let mut pieces = Vec::new();
     while let Some(sep) = str.find('/') {
-        if sep == 0 || &str[sep - 1..sep] != "\\" {
-            pieces.push(&str[..sep]);
-            str = &str[sep + 1..];
+        pieces.push(&str[..sep]);
+        str = &str[sep + 1..];
+        if pieces.len() == 3 {
+            break;
         }
     }
-    pieces.push(str);
+    let leftover = str.replace("\\\\", "\\").replace("\\/", "/");
+    pieces.push(leftover.as_ref());
 
     if pieces.len() < 2 {
         return Err(DecodeError::Invalid);
@@ -108,6 +132,11 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
             i32::from_str(session)?,
             i32::from_str(length)?,
         ))),
+        ["data", session, pos, data] => Ok(Decoded::Data(Data::new(
+            i32::from_str(session)?,
+            i32::from_str(pos)?,
+            data,
+        ))),
         _ => Err(DecodeError::Invalid),
     }
 }
@@ -117,7 +146,7 @@ mod tests {
     use super::decode;
     use super::DecodeError;
     use super::Decoded;
-    use crate::lrcp::msg::{Ack, Close, Connect};
+    use crate::lrcp::msg::{Ack, Close, Connect, Data};
 
     #[test]
     fn decode_error() {
@@ -145,7 +174,7 @@ mod tests {
 
     #[test]
     fn encode_close() {
-        assert_eq!(Close::new(1234567).encode().as_bytes(), b"/close/1234567/");
+        assert_eq!(Close::new(1234567).encode(), "/close/1234567/");
     }
 
     #[test]
@@ -158,9 +187,38 @@ mod tests {
 
     #[test]
     fn encode_ack() {
+        assert_eq!(Ack::new(1234567, 1024).encode(), "/ack/1234567/1024/");
+    }
+
+    #[test]
+    fn decode_data() {
+        let decoded = decode(b"/data/1234567/1024/hello/");
+        assert!(decoded.is_ok());
+        let decoded = decoded.unwrap();
+        assert_eq!(decoded, Decoded::Data(Data::new(1234567, 1024, "hello")));
+    }
+
+    #[test]
+    fn encode_data() {
         assert_eq!(
-            Ack::new(1234567, 1024).encode().as_bytes(),
-            b"/ack/1234567/1024/"
+            Data::new(1234567, 1024, "hello").encode(),
+            "/data/1234567/1024/hello/"
+        );
+    }
+
+    #[test]
+    fn decode_escaped_data() {
+        let decoded = decode(b"/data/1234567/1024/hel\\/lo\\\\/");
+        assert!(decoded.is_ok());
+        let decoded = decoded.unwrap();
+        assert_eq!(decoded, Decoded::Data(Data::new(1234567, 1024, "hel/lo\\")));
+    }
+
+    #[test]
+    fn encode_escaped_data() {
+        assert_eq!(
+            Data::new(1234567, 1024, "hel/lo\\").encode(),
+            "/data/1234567/1024/hel\\/lo\\\\/"
         );
     }
 }
