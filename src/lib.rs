@@ -1,5 +1,6 @@
 mod async_lib;
 pub mod budgetchat;
+pub mod lrcp;
 pub mod speed;
 
 pub use clap::Parser;

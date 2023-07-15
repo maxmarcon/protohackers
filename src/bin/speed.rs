@@ -120,7 +120,7 @@ fn main() {
     let dispatchers = Arc::new(Mutex::new(HashMap::new()));
     let car_tickets = Arc::new(Mutex::new(HashMap::new()));
 
-    let (sender, _receiver) = broadcast::channel(10_000);
+    let (sender, _receiver) = broadcast::channel(256);
     let args = CliArgs::parse();
 
     let handler: Arc<_> = Arc::new(move |tcpstream| -> BoxFuture<'static, io::Result<()>> {
