@@ -50,7 +50,7 @@ impl Connect {
 
 #[derive(Debug, PartialEq)]
 pub struct Close {
-    session: i32,
+    pub session: i32,
 }
 
 impl Close {
@@ -80,9 +80,9 @@ impl Ack {
 
 #[derive(Debug, PartialEq)]
 pub struct Data {
-    session: i32,
-    pos: i32,
-    data: String,
+    pub session: i32,
+    pub pos: i32,
+    pub data: String,
 }
 impl Data {
     pub fn new(session: i32, pos: i32, data: &str) -> Self {
