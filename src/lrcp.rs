@@ -4,6 +4,7 @@ use crate::lrcp::msg::{decode, Ack, Close, Data, Decoded};
 use crate::lrcp::TimeoutType::{Rtx, Sess};
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap};
+use std::fmt::{Display, Formatter};
 use std::io;
 use std::net::SocketAddr;
 use std::ops::Add;
@@ -18,12 +19,24 @@ use tokio::time::Instant;
 
 #[derive(Debug)]
 pub enum Error {
-    EOF,
+    Eof,
     Disconnected,
-    IO(io::Error),
+    Io(io::Error),
 }
 
-type Result<T> = std::result::Result<T, Error>;
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Eof => writeln!(f, "EOF"),
+            Error::Disconnected => writeln!(f, "Disconnected"),
+            Error::Io(io_error) => writeln!(f, "{}", io_error),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct Socket {
     join_handle: JoinHandle<io::Result<()>>,
@@ -95,7 +108,7 @@ impl Stream {
         if let Some(datagram) = self.app_reader.recv().await {
             all_data = datagram.data;
         } else {
-            return Err(Error::EOF);
+            return Err(Error::Eof);
         }
         loop {
             match self.app_reader.try_recv() {
@@ -103,7 +116,7 @@ impl Stream {
                     all_data += &data;
                 }
                 Err(TryRecvError::Empty) => break,
-                Err(_) => return Err(Error::EOF),
+                Err(_) => return Err(Error::Eof),
             }
         }
         Ok(all_data)
@@ -549,7 +562,7 @@ mod tests {
 
         let read = stream.read().await;
         assert!(read.is_err());
-        assert!(matches!(read.unwrap_err(), Error::EOF));
+        assert!(matches!(read.unwrap_err(), Error::Eof));
     }
 
     #[tokio::test]
