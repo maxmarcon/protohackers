@@ -97,7 +97,7 @@ impl Data {
             "/data/{}/{}/{}/",
             self.session,
             self.pos,
-            self.data.replace("\\", "\\\\").replace("/", "\\/")
+            self.data.replace('\\', "\\\\").replace('/', "\\/")
         )
     }
 }

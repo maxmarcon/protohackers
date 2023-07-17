@@ -64,8 +64,7 @@ impl Reading {
     ) -> Vec<msg::Ticket> {
         let earlier_reading = reading_map
             .range((Unbounded, Excluded(new_reading)))
-            .rev()
-            .next();
+            .next_back();
         let later_reading = reading_map.range((Excluded(new_reading), Unbounded)).next();
 
         [earlier_reading, later_reading]

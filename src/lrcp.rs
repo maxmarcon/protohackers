@@ -1,7 +1,7 @@
 mod msg;
 
 use crate::lrcp::msg::{decode, Ack, Close, Data, Decoded};
-use crate::lrcp::TimeoutType::{RTX, SESSION};
+use crate::lrcp::TimeoutType::{Rtx, Sess};
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap};
 use std::io;
@@ -131,8 +131,8 @@ struct Session {
 
 #[derive(Debug, Clone)]
 enum TimeoutType {
-    RTX,
-    SESSION,
+    Rtx,
+    Sess,
 }
 
 #[derive(Debug, Clone)]
@@ -183,10 +183,10 @@ impl SocketState {
                 _ = async { sleep_until(next_timeout.unwrap().deadline).await }, if next_timeout.is_some() => {
                     let timeout = self.timeouts.pop().unwrap().0;
                     match timeout.which {
-                        RTX => {
+                        Rtx => {
                             self.handle_rtx_to(timeout).await?
                         },
-                        SESSION => {
+                        Sess => {
                             self.handle_session_to(timeout).await?
                         }
                     }
@@ -207,7 +207,7 @@ impl SocketState {
                                 .await?;
                         self.timeouts.push(std::cmp::Reverse(Timeout{
                             deadline: Instant::now().add(Duration::from_millis(self.rtx_to)),
-                            which: RTX,
+                            which: Rtx,
                             session_id: session.id,
                             data_range: session.next_pos..session.next_pos+datagram.data.len() as i32
                         }));
@@ -225,7 +225,7 @@ impl SocketState {
             session_id,
             ..
         } = &timeout;
-        if let Some(session) = self.session_store.get(&session_id) {
+        if let Some(session) = self.session_store.get(session_id) {
             if session.next_pos as usize - session.outstanding.len() <= data_range.start as usize {
                 let outstading_start_pos = session.next_pos - session.outstanding.len() as i32;
                 let data = Data::new(
@@ -257,7 +257,7 @@ impl SocketState {
         if self.session_store.get(&session_id).is_some_and(|session| {
             session
                 .last_seen
-                .is_some_and(|last_seen| &deadline > &last_seen)
+                .is_some_and(|last_seen| deadline > last_seen)
         }) {
             self.close_session(session_id).await?;
         }
@@ -300,7 +300,7 @@ impl SocketState {
 
         let acked = new_ack - first_outstanding;
         session.outstanding.drain(..acked as usize);
-        if session.outstanding.len() > 0 {
+        if !session.outstanding.is_empty() {
             // Partial ack
             let data = Data::new(session.id, new_ack, &session.outstanding);
             self.udpsocket
@@ -326,7 +326,7 @@ impl SocketState {
         if let Some(session) = self.session_store.get_mut(&session_id) {
             session.last_seen = Some(Instant::now());
             let timeout = Timeout {
-                which: SESSION,
+                which: Sess,
                 session_id: session.id,
                 data_range: 0..0,
                 deadline: Instant::now().add(Duration::from_millis(self.session_to)),
@@ -355,7 +355,7 @@ impl SocketState {
 
         let stream = Stream {
             session_id: session.id,
-            app_writer: app_writer,
+            app_writer,
             app_reader,
         };
         self.session_store.insert(session_id, session);
@@ -384,7 +384,7 @@ impl SocketState {
             self.session_store.remove(&data.session);
         }
         if let Some(session) = self.session_store.get(&data.session) {
-            self.ack_session(&session).await?;
+            self.ack_session(session).await?;
         } else {
             self.udpsocket
                 .send_to(Close::new(data.session).encode().as_bytes(), peer)
@@ -399,8 +399,8 @@ impl SocketState {
         peer: SocketAddr,
         app_writer: &Sender<Datagram>,
     ) -> io::Result<()> {
-        match decode(&buf) {
-            Ok(msg) => match msg {
+        if let Ok(msg) = decode(buf) {
+            match msg {
                 Decoded::Connect(connect) => {
                     if self.session_store.get(&connect.session).is_none() {
                         self.new_session(connect.session, peer, app_writer.clone())
@@ -418,8 +418,7 @@ impl SocketState {
                     self.update_last_seen(ack.session);
                     self.handle_ack(ack.session, ack.length, peer).await?;
                 }
-            },
-            Err(_) => (),
+            }
         }
         Ok(())
     }
