@@ -65,8 +65,8 @@ impl Close {
 
 #[derive(Debug, PartialEq)]
 pub struct Ack {
-    session: i32,
-    length: i32,
+    pub session: i32,
+    pub length: i32,
 }
 
 impl Ack {
