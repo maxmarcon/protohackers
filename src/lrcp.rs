@@ -37,7 +37,7 @@ impl std::error::Error for Error {}
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct Socket {
-    join_handle: JoinHandle<io::Result<()>>,
+    join_handle: JoinHandle<()>,
     stream_receiver: Receiver<Stream>,
 }
 
@@ -53,7 +53,7 @@ impl Socket {
             session_to,
         };
 
-        let join_handle = tokio::spawn(async move { socket_state.protocol_loop().await });
+        let join_handle = tokio::spawn(async move { socket_state.protocol_loop().await.unwrap() });
 
         Self {
             join_handle,
@@ -78,7 +78,7 @@ impl Drop for Socket {
 
 #[derive(Debug)]
 pub struct Stream {
-    session_id: i32,
+    pub session_id: i32,
     reader: Receiver<Datagram>,
     writer: Sender<Datagram>,
 }
@@ -109,8 +109,8 @@ impl Stream {
         }
         loop {
             match self.reader.try_recv() {
-                Ok(Datagram { data, .. }) => {
-                    all_data += &data;
+                Ok(datagram) => {
+                    all_data += &datagram.data;
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(_) => return Err(Error::Eof),
@@ -138,6 +138,28 @@ struct Session {
     outstanding: String,
     rtx_to: Option<Instant>,
     session_to: Option<Instant>,
+}
+
+impl Display for Session {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let rtx_in = self
+            .rtx_to
+            .map(|t| t.duration_since(Instant::now()).as_millis());
+        let session_in = self
+            .session_to
+            .map(|t| t.duration_since(Instant::now()).as_millis());
+
+        write!(
+            f,
+            "id={} last_ack_sent={} next_pos={} oustanding={} rtx_to={:?} session_to={:?}",
+            self.id,
+            self.last_ack_sent,
+            self.next_pos,
+            self.outstanding.len(),
+            rtx_in,
+            session_in
+        )
+    }
 }
 
 impl Session {
@@ -228,7 +250,7 @@ impl SocketState {
 impl SocketState {
     async fn protocol_loop(&mut self) -> io::Result<()> {
         let (stream_writer, mut from_stream) = channel(256);
-        let mut buf = vec![0; 1024];
+        let mut buf = vec![0; 65536];
         loop {
             let next_timeout = self.timeouts().min();
 
@@ -246,15 +268,12 @@ impl SocketState {
                 }
                 result = self.udpsocket.recv_from(&mut buf) => {
                     let (size, addr) = result?;
-                    // println!("{} bytes from UDP socket: {}", size, String::from_utf8(buf[..size].to_vec()).unwrap());
                     self.process_udp(&buf[..size], addr, &stream_writer).await?;
                 }
                 Some(datagram) = from_stream.recv() => {
-                    // println!("data from application = {:?}", datagram);
                     if let Some(session) = self.session_store.get_mut(&datagram.session_id) {
                          Self::send_data(session.id, session.next_pos, &datagram.data, &self.udpsocket, session.peer).await?;
                          session.next_pos += datagram.data.len() as i32;
-                         let session = session;
                          session.outstanding += &datagram.data;
                          session.reset_rtx_to(self.rtx_to);
                          session.reset_session_to(self.session_to);
@@ -301,7 +320,6 @@ impl SocketState {
     ) -> io::Result<()> {
         let session = self.session_store.get(&session_id);
         if session.is_none() {
-            // println!("session {} not found!", session_id);
             self.close_session(session_id, Some(peer)).await?;
             return Ok(());
         }
@@ -358,7 +376,6 @@ impl SocketState {
         let mut current_pos = pos;
         for piece in pieces {
             let data = Data::new(session_id, current_pos, piece);
-            // println!("sending: {}", data.encode());
             udpsocket.send_to(data.encode().as_bytes(), to).await?;
             current_pos += piece.len() as i32;
         }
@@ -366,10 +383,6 @@ impl SocketState {
     }
 
     async fn ack_session(&self, session: &Session) -> io::Result<()> {
-        // println!(
-        //     "sending: {}",
-        //     Ack::new(session.id, session.last_ack_sent).encode()
-        // );
         self.udpsocket
             .send_to(
                 Ack::new(session.id, session.last_ack_sent)
@@ -405,6 +418,7 @@ impl SocketState {
             writer: stream_writer,
             reader: stream_reader,
         };
+        println!("new session {session_id}");
         self.session_store.insert(session_id, session);
         self.ack_session(&self.session_store[&session_id]).await?;
         self.stream_sender.send(stream).await.unwrap();
@@ -415,7 +429,6 @@ impl SocketState {
         let mut stream_gone = false;
         if let Some(session) = self.session_store.get_mut(&data.session) {
             if session.last_ack_sent == data.pos {
-                // println!("passing {} to application", data.data);
                 session.last_ack_sent += data.data.len() as i32;
                 stream_gone = session
                     .to_stream
@@ -445,10 +458,12 @@ impl SocketState {
         stream_writer: &Sender<Datagram>,
     ) -> io::Result<()> {
         if let Ok(msg) = decode(buf) {
-            // println!("parsed: {:?}", msg);
             match msg {
                 Decoded::Connect(connect) => {
-                    if self.session_store.get(&connect.session).is_none() {
+                    if let Some(session) = self.session_store.get(&connect.session) {
+                        // self.udpsocket.send_to(Ack::new(session.id, 0).encode().as_bytes(), session.peer).await?;
+                        self.ack_session(session).await?;
+                    } else {
                         self.new_session(connect.session, peer, stream_writer.clone())
                             .await?;
                     }
@@ -463,11 +478,6 @@ impl SocketState {
                     self.handle_ack(ack.session, ack.length, peer).await?;
                 }
             }
-        } else {
-            println!(
-                "Invalid message = {}",
-                String::from_utf8(buf.to_vec()).unwrap()
-            );
         }
         Ok(())
     }
@@ -487,6 +497,17 @@ mod tests {
     #[tokio::test]
     async fn peer_opens_session() {
         open_session().await;
+    }
+
+    #[tokio::test]
+    async fn repeated_connection_message() {
+        let (_socket, peer, _stream) = open_session().await;
+
+        peer.send(format!("/connect/{SESSION}/").as_bytes())
+            .await
+            .unwrap();
+
+        assert_receive(&peer, &format!("/ack/{SESSION}/0/")).await;
     }
 
     #[tokio::test]
