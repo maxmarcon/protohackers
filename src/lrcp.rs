@@ -224,7 +224,7 @@ impl SocketState {
                             self.handle_rtx_timeout(timeout.session_id).await?
                         },
                         TimeoutType::Session => {
-                            self.close_session(timeout.session_id).await?;
+                            self.close_session(timeout.session_id, None).await?;
                         }
                     }
                 }
@@ -264,12 +264,13 @@ impl SocketState {
         Ok(())
     }
 
-    async fn close_session(&mut self, session_id: i32) -> io::Result<()> {
-        if let Some(session) = self.session_store.remove(&session_id) {
-            self.udpsocket
-                .send_to(Close::new(session_id).encode().as_bytes(), session.peer)
-                .await?;
-        }
+    async fn close_session(&mut self, session_id: i32, peer: Option<SocketAddr>) -> io::Result<()> {
+        let session = self.session_store.remove(&session_id);
+        let peer = peer.unwrap_or_else(|| session.unwrap().peer);
+        println!("closing session {session_id}");
+        self.udpsocket
+            .send_to(Close::new(session_id).encode().as_bytes(), peer)
+            .await?;
         Ok(())
     }
 
@@ -281,9 +282,7 @@ impl SocketState {
     ) -> io::Result<()> {
         let session = self.session_store.get(&session_id);
         if session.is_none() {
-            self.udpsocket
-                .send_to(Close::new(session_id).encode().as_bytes(), peer)
-                .await?;
+            self.close_session(session_id, Some(peer)).await?;
             return Ok(());
         }
 
@@ -291,7 +290,7 @@ impl SocketState {
 
         let first_outstanding = session.next_pos - session.outstanding.len() as i32;
         if new_ack > session.next_pos {
-            return self.close_session(session.id).await;
+            return self.close_session(session.id, None).await;
         }
         if new_ack < first_outstanding {
             return Ok(());
@@ -334,6 +333,7 @@ impl SocketState {
         let mut current_pos = pos;
         for piece in pieces {
             let data = Data::new(session_id, current_pos, piece);
+            println!("sending: {}", data.encode());
             udpsocket.send_to(data.encode().as_bytes(), to).await?;
             current_pos += piece.len() as i32;
         }
@@ -414,9 +414,7 @@ impl SocketState {
         if let Some(session) = self.session_store.get(&data.session) {
             self.ack_session(session).await?;
         } else {
-            self.udpsocket
-                .send_to(Close::new(data.session).encode().as_bytes(), peer)
-                .await?;
+            self.close_session(data.session, Some(peer)).await?;
         }
         Ok(())
     }
@@ -438,7 +436,7 @@ impl SocketState {
                     }
                 }
                 Decoded::Close(close) => {
-                    self.close_session(close.session).await?;
+                    self.close_session(close.session, Some(peer)).await?;
                 }
                 Decoded::Data(data) => {
                     self.update_last_seen(data.session);
