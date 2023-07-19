@@ -3,8 +3,10 @@ use protohackers::lrcp::{Socket, Stream};
 use protohackers::{CliArgs, Parser, Server};
 use std::io;
 use std::io::ErrorKind;
-use std::io::ErrorKind::Other;
+use std::ops::{Add, Sub};
+use std::time::Duration;
 use tokio::net::UdpSocket;
+use tokio::time::{Instant, sleep_until};
 
 fn main() {
     let args = CliArgs::parse();
@@ -16,15 +18,18 @@ fn main() {
 
 #[tokio::main]
 async fn handler(udpsocket: std::net::UdpSocket, _max_size: usize) -> io::Result<()> {
+    udpsocket.set_nonblocking(true)?;
     let udpsocket = UdpSocket::from_std(udpsocket).unwrap();
 
     let mut lrcp = Socket::new(udpsocket, 3_000, 60_000);
-
+    
     loop {
         match lrcp.accept().await {
-            Ok(stream) => handle_stream(stream)
-                .await
-                .map_err(|e| io::Error::new(Other, e))?,
+            Ok(stream) => {
+                tokio::spawn(async move {
+                    handle_stream(stream).await
+                });
+            },
             Err(error) => return Err(io::Error::new(ErrorKind::Other, error)),
         }
     }
@@ -35,10 +40,11 @@ async fn handle_stream(mut stream: Stream) -> lrcp::Result<()> {
 
     loop {
         while let Some(pos) = buf.find('\n') {
-            let line = buf.drain(..pos);
-            let reversed: String = line.rev().collect();
+            let line = buf.drain(..pos).collect::<String>();
+            buf.drain(..1);
+            let reversed: String = line.chars().rev().collect::<String>() + "\n";
             stream.send(&reversed).await?;
         }
-        buf += &stream.read().await?
+        buf += &stream.read().await?;
     }
 }
