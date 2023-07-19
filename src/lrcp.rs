@@ -1,14 +1,13 @@
 mod msg;
 
 use crate::lrcp::msg::{decode, Ack, Close, Data, Decoded};
-use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap};
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::net::SocketAddr;
 use std::ops::Add;
-use std::ops::Range;
-use std::time::{Duration};
+use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -52,7 +51,6 @@ impl Socket {
             stream_sender,
             rtx_to,
             session_to,
-            timeouts: BinaryHeap::new(),
         };
 
         let join_handle = tokio::spawn(async move { socket_state.protocol_loop().await });
@@ -138,7 +136,28 @@ struct Session {
     next_pos: i32,
     to_stream: Sender<Datagram>,
     outstanding: String,
-    last_seen: Option<Instant>,
+    rtx_to: Option<Instant>,
+    session_to: Option<Instant>,
+}
+
+impl Session {
+    fn timeouts(&self) -> Vec<Timeout> {
+        [
+            self.rtx_to.map(|t| Timeout {
+                deadline: t,
+                session_id: self.id,
+                which: TimeoutType::Rtx,
+            }),
+            self.session_to.map(|t| Timeout {
+                deadline: t,
+                session_id: self.id,
+                which: TimeoutType::Session,
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -152,7 +171,6 @@ struct Timeout {
     deadline: Instant,
     session_id: i32,
     which: TimeoutType,
-    data_range: Range<i32>,
 }
 
 impl PartialEq for Timeout {
@@ -183,7 +201,12 @@ struct SocketState {
     stream_sender: Sender<Stream>,
     rtx_to: u64,
     session_to: u64,
-    timeouts: BinaryHeap<Reverse<Timeout>>,
+}
+
+impl SocketState {
+    pub fn timeouts(&self) -> impl Iterator<Item = Timeout> + '_ {
+        self.session_store.values().flat_map(Session::timeouts)
+    }
 }
 
 impl SocketState {
@@ -191,17 +214,17 @@ impl SocketState {
         let (stream_writer, mut from_stream) = channel(256);
         let mut buf = vec![0; 1024];
         loop {
-            let next_timeout = self.timeouts.peek().map(|Reverse(timeout)| timeout);
+            let next_timeout = self.timeouts().min();
 
             tokio::select! {
-                _ = async { sleep_until(next_timeout.unwrap().deadline).await }, if next_timeout.is_some() => {
-                    let timeout = self.timeouts.pop().unwrap().0;
+                _ = async { sleep_until(next_timeout.as_ref().unwrap().deadline).await }, if next_timeout.is_some() => {
+                    let timeout = next_timeout.unwrap();
                     match timeout.which {
                         TimeoutType::Rtx => {
-                            self.handle_rtx_timeout(timeout).await?
+                            self.handle_rtx_timeout(timeout.session_id).await?
                         },
                         TimeoutType::Session => {
-                            self.handle_session_timeout(timeout).await?
+                            self.close_session(timeout.session_id).await?;
                         }
                     }
                 }
@@ -213,66 +236,30 @@ impl SocketState {
                 Some(datagram) = from_stream.recv() => {
                     println!("data from application = {:?}", datagram);
                     if let Some(session) = self.session_store.get_mut(&datagram.session_id) {
-                         self.udpsocket
-                                .send_to(
-                                    Data::new(session.id, session.next_pos, &datagram.data)
-                                        .encode()
-                                        .as_bytes(),
-                                    session.peer,
-                                )
-                                .await?;
-                         self.timeouts.push(std::cmp::Reverse(Timeout{
-                            deadline: Instant::now().add(Duration::from_millis(self.rtx_to)),
-                            which: TimeoutType::Rtx,
-                            session_id: session.id,
-                            data_range: session.next_pos..session.next_pos+datagram.data.len() as i32
-                         }));
+                         Self::send_data(session.id, session.next_pos, &datagram.data, &self.udpsocket, session.peer).await?;
                          session.next_pos += datagram.data.len() as i32;
+                         let session = session;
                          session.outstanding += &datagram.data;
+                         if session.rtx_to.is_none() {
+                            session.rtx_to = Some(Instant::now().add(Duration::from_millis(self.rtx_to)));
+                         }
                     }
                 }
             }
         }
     }
 
-    async fn handle_rtx_timeout(&mut self, timeout: Timeout) -> io::Result<()> {
-        let Timeout {
-            data_range,
-            session_id,
-            ..
-        } = &timeout;
-        if let Some(session) = self.session_store.get(session_id) {
-            let outstading_start_pos = session.next_pos - session.outstanding.len() as i32;
-            if outstading_start_pos <= data_range.start {
-                let data = Data::new(
-                    *session_id,
-                    data_range.start,
-                    &session.outstanding[data_range.start as usize - outstading_start_pos as usize
-                        ..data_range.end as usize - outstading_start_pos as usize],
-                );
-                self.udpsocket
-                    .send_to(data.encode().as_bytes(), session.peer)
-                    .await?;
-
-                let mut new_timeout = timeout.clone();
-                new_timeout.deadline = Instant::now().add(Duration::from_millis(self.rtx_to));
-                self.timeouts.push(Reverse(new_timeout));
-            }
-        }
-        Ok(())
-    }
-
-    async fn handle_session_timeout(
-        &mut self,
-        Timeout {
-            session_id,
-            ..
-        }: Timeout,
-    ) -> io::Result<()> {
-        if self.session_store.get(&session_id).is_some_and(|session| {
-            Instant::now().duration_since(session.last_seen.unwrap()) > Duration::from_millis(self.session_to)
-        }) {
-            self.close_session(session_id).await?;
+    async fn handle_rtx_timeout(&mut self, session_id: i32) -> io::Result<()> {
+        if let Some(session) = self.session_store.get_mut(&session_id) {
+            Self::send_data(
+                session.id,
+                session.next_pos - session.outstanding.len() as i32,
+                &session.outstanding,
+                &self.udpsocket,
+                session.peer,
+            )
+            .await?;
+            session.rtx_to = Some(Instant::now().add(Duration::from_millis(self.rtx_to)));
         }
         Ok(())
     }
@@ -316,39 +303,48 @@ impl SocketState {
         session.outstanding.drain(..acked as usize);
         if !session.outstanding.is_empty() {
             // Partial ack
-            let data = Data::new(session.id, new_ack, &session.outstanding);
-            self.udpsocket
-                .send_to(data.encode().as_bytes(), session.peer)
-                .await?;
+            Self::send_data(
+                session.id,
+                new_ack,
+                &session.outstanding,
+                &self.udpsocket,
+                session.peer,
+            )
+            .await?;
         }
         Ok(())
     }
 
+    async fn send_data(
+        session_id: i32,
+        pos: i32,
+        data: &str,
+        udpsocket: &UdpSocket,
+        to: SocketAddr,
+    ) -> io::Result<()> {
+        let mut pieces = Vec::new();
+        let mut remaining = data;
+        let mut chunk;
+        while remaining.len() > MAX_DATA_LEN {
+            (chunk, remaining) = remaining.split_at(MAX_DATA_LEN);
+            pieces.push(chunk);
+        }
+        pieces.push(remaining);
 
-    // async fn send_data(&self, session: &Session, pos: i32, data: &str) -> io::Result<()> {
-    //     let mut pieces = Vec::new();
-    //     let mut remaining = data;
-    //     let mut chunk;
-    //     while remaining.len() > MAX_DATA_LEN {
-    //         (chunk, remaining) = remaining.split_at(MAX_DATA_LEN-1);
-    //         pieces.push(chunk);
-    //     }
-    //     pieces.push(remaining);
-    //     
-    //     let mut current_pos = pos;
-    //     for piece in pieces {
-    //         let data = Data::new(session.id, current_pos, piece);
-    //         self.udpsocket
-    //             .send_to(data.encode().as_bytes(), session.peer)
-    //             .await?;
-    //         current_pos += piece.len() as i32;
-    //     }
-    //     Ok(())
-    // }
-    // 
+        let mut current_pos = pos;
+        for piece in pieces {
+            let data = Data::new(session_id, current_pos, piece);
+            udpsocket.send_to(data.encode().as_bytes(), to).await?;
+            current_pos += piece.len() as i32;
+        }
+        Ok(())
+    }
+
     async fn ack_session(&self, session: &Session) -> io::Result<()> {
-        println!("sending: {}", Ack::new(session.id, session.last_ack_sent)
-            .encode());
+        println!(
+            "sending: {}",
+            Ack::new(session.id, session.last_ack_sent).encode()
+        );
         self.udpsocket
             .send_to(
                 Ack::new(session.id, session.last_ack_sent)
@@ -361,18 +357,9 @@ impl SocketState {
     }
 
     fn update_last_seen(&mut self, session_id: i32) {
-        if let Some(session) = self.session_store.get_mut(&session_id) {
-            session.last_seen = Some(Instant::now());
-            println!("last seen session {} = {:?}", session_id, Instant::now());
-            let timeout = Timeout {
-                which: TimeoutType::Session,
-                session_id: session.id,
-                data_range: 0..0,
-                deadline: Instant::now().add(Duration::from_millis(self.session_to)),
-            };
-            println!("session timeout = {:?}", timeout.deadline);
-            self.timeouts.push(Reverse(timeout));
-        }
+        self.session_store.entry(session_id).and_modify(|session| {
+            session.session_to = Some(Instant::now().add(Duration::from_millis(self.session_to)))
+        });
     }
 
     async fn new_session(
@@ -390,7 +377,8 @@ impl SocketState {
             peer,
             to_stream,
             outstanding: String::new(),
-            last_seen: None,
+            rtx_to: None,
+            session_to: None,
         };
 
         let stream = Stream {
@@ -470,7 +458,7 @@ impl SocketState {
 
 #[cfg(test)]
 mod tests {
-    use crate::lrcp::{Error, MAX_DATA_LEN, Socket, Stream};
+    use crate::lrcp::{Error, Socket, Stream, MAX_DATA_LEN};
     use std::time::Duration;
     use tokio::net::UdpSocket;
     use tokio::time::timeout;
@@ -574,7 +562,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retransmission_of_partially_acked_data() {
+    async fn retransmission_timeout_for_partially_acked_data() {
         let (_socket, peer, mut stream) = open_session().await;
 
         assert!(stream.send("hello world").await.is_ok());
@@ -583,7 +571,7 @@ mod tests {
         peer.send(&format!("/ack/{SESSION}/6/").as_bytes())
             .await
             .unwrap();
-        
+
         assert_receive(&peer, &format!("/data/{SESSION}/6/world/")).await;
 
         tokio::time::pause();

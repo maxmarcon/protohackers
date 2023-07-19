@@ -6,7 +6,7 @@ use std::io::ErrorKind;
 use std::ops::{Add, Sub};
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::time::{Instant, sleep_until};
+use tokio::time::{sleep_until, Instant};
 
 fn main() {
     let args = CliArgs::parse();
@@ -22,14 +22,12 @@ async fn handler(udpsocket: std::net::UdpSocket, _max_size: usize) -> io::Result
     let udpsocket = UdpSocket::from_std(udpsocket).unwrap();
 
     let mut lrcp = Socket::new(udpsocket, 3_000, 60_000);
-    
+
     loop {
         match lrcp.accept().await {
             Ok(stream) => {
-                tokio::spawn(async move {
-                    handle_stream(stream).await
-                });
-            },
+                tokio::spawn(async move { handle_stream(stream).await });
+            }
             Err(error) => return Err(io::Error::new(ErrorKind::Other, error)),
         }
     }
