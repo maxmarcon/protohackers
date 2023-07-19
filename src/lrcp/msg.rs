@@ -84,6 +84,7 @@ pub struct Data {
     pub pos: i32,
     pub data: String,
 }
+
 impl Data {
     pub fn new(session: i32, pos: i32, data: &str) -> Self {
         Self {
@@ -130,11 +131,20 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
             i32::from_str(session)?,
             i32::from_str(length)?,
         ))),
-        ["data", session, pos, data] => Ok(Decoded::Data(Data::new(
-            i32::from_str(session)?,
-            i32::from_str(pos)?,
-            &data.replace("\\\\", "\\").replace("\\/", "/"),
-        ))),
+        ["data", session, pos, data] => {
+            if data
+                .char_indices()
+                .any(|(pos, ch)| ch == '/' && pos > 0 && &data[pos - 1..pos] != "\\")
+            {
+                Err(DecodeError::Invalid)
+            } else {
+                Ok(Decoded::Data(Data::new(
+                    i32::from_str(session)?,
+                    i32::from_str(pos)?,
+                    &data.replace("\\\\", "\\").replace("\\/", "/"),
+                )))
+            }
+        }
         _ => Err(DecodeError::Invalid),
     }
 }
@@ -157,6 +167,14 @@ mod tests {
     #[test]
     fn decode_error_2() {
         let decoded = decode(b"/connect/123\\/33/");
+        assert!(decoded.is_err());
+        let decoded = decoded.unwrap_err();
+        assert!(matches!(decoded, DecodeError::Invalid));
+    }
+
+    #[test]
+    fn decode_error_3() {
+        let decoded = decode(b"/data/1734379091/0/illegal data/has too many/parts/");
         assert!(decoded.is_err());
         let decoded = decoded.unwrap_err();
         assert!(matches!(decoded, DecodeError::Invalid));
