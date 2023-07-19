@@ -54,7 +54,7 @@ fn handle_stream(mut tcpstream: TcpStream) -> io::Result<()> {
 
     loop {
         tcpstream.read_exact(&mut buf)?;
-        let message = match parse_message(&buf[..9]) {
+        let message = match parse_message(&buf) {
             Ok(message) => message,
             Err(()) => {
                 tcpstream.write_all(&[0]).unwrap();
