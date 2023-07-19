@@ -3,10 +3,7 @@ use protohackers::lrcp::{Socket, Stream};
 use protohackers::{CliArgs, Parser, Server};
 use std::io;
 use std::io::ErrorKind;
-use std::ops::{Add, Sub};
-use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::time::{sleep_until, Instant};
 
 fn main() {
     let args = CliArgs::parse();
@@ -38,9 +35,10 @@ async fn handle_stream(mut stream: Stream) -> lrcp::Result<()> {
 
     loop {
         while let Some(pos) = buf.find('\n') {
-            let line = buf.drain(..pos).collect::<String>();
-            buf.drain(..1);
-            let reversed: String = line.chars().rev().collect::<String>() + "\n";
+            let mut line: String = buf.drain(..=pos).collect();
+            line.pop();
+            let mut reversed: String = line.chars().rev().collect();
+            reversed.push('\n');
             stream.send(&reversed).await?;
         }
         buf += &stream.read().await?;
