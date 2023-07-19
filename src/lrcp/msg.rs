@@ -103,7 +103,12 @@ impl Data {
     }
 }
 
+const MAX_MSG_LEN: usize = 1000;
+
 pub fn decode(bytes: &[u8]) -> Result<Decoded, DecodeError> {
+    if bytes.len() >= MAX_MSG_LEN {
+        return Err(DecodeError::Invalid);
+    }
     let str = String::from_utf8(bytes.into())?;
     if !str.starts_with('/') || !str.ends_with('/') {
         return Err(DecodeError::Invalid);
@@ -157,7 +162,7 @@ mod tests {
     use crate::lrcp::msg::{Ack, Close, Connect, Data};
 
     #[test]
-    fn decode_error() {
+    fn decode_error_too_few_parts() {
         let decoded = decode(b"/connect/");
         assert!(decoded.is_err());
         let decoded = decoded.unwrap_err();
@@ -165,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_error_2() {
+    fn decode_error_invalid_integer() {
         let decoded = decode(b"/connect/123\\/33/");
         assert!(decoded.is_err());
         let decoded = decoded.unwrap_err();
@@ -173,8 +178,25 @@ mod tests {
     }
 
     #[test]
-    fn decode_error_3() {
+    fn decode_error_too_many_parts() {
         let decoded = decode(b"/data/1734379091/0/illegal data/has too many/parts/");
+        assert!(decoded.is_err());
+        let decoded = decoded.unwrap_err();
+        assert!(matches!(decoded, DecodeError::Invalid));
+    }
+
+    #[test]
+    fn decode_error_too_large_integer() {
+        let decoded = decode(b"/data/2147483648/0/session number too long/");
+        assert!(decoded.is_err());
+        let decoded = decoded.unwrap_err();
+        assert!(matches!(decoded, DecodeError::ParseIntError(_)));
+    }
+
+    #[test]
+    fn decode_error_message_too_long() {
+        let data: String = (1..1000).map(|_| 'X').collect();
+        let decoded = decode(format!("/data/1734379091/0/{data}/").as_bytes());
         assert!(decoded.is_err());
         let decoded = decoded.unwrap_err();
         assert!(matches!(decoded, DecodeError::Invalid));
