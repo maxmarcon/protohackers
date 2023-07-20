@@ -666,7 +666,10 @@ mod tests {
 
     #[tokio::test]
     async fn peer_sends_ack_for_unsent_data() {
-        let (_socket, peer, _stream) = open_session().await;
+        let (_socket, peer, mut stream) = open_session().await;
+
+        stream.send("hello").await.unwrap();
+        assert_receive(&peer, &format!("/data/{SESSION}/0/hello/")).await;
 
         peer.send(&format!("/ack/{SESSION}/10/").as_bytes())
             .await
