@@ -336,12 +336,14 @@ impl SocketState {
         }
 
         let session = self.session_store.get_mut(&session_id).unwrap();
-        session.cancel_session_to();
         session.cancel_rtx_to();
 
         let acked = new_ack - first_outstanding;
         session.outstanding.drain(..acked as usize);
-        if !session.outstanding.is_empty() {
+
+        if session.outstanding.is_empty() {
+            session.cancel_session_to();
+        } else {
             // Partial ack
             Self::send_data(
                 session.id,
@@ -351,7 +353,6 @@ impl SocketState {
                 session.peer,
             )
             .await?;
-            session.reset_session_to(self.session_to);
             session.reset_rtx_to(self.rtx_to);
         }
         Ok(())
