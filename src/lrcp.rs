@@ -12,8 +12,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio::time::sleep_until;
 use tokio::time::Instant;
+use tokio::time::{sleep, sleep_until};
 
 #[derive(Debug)]
 pub enum Error {
@@ -254,6 +254,10 @@ impl SocketState {
         loop {
             let next_timeout = self.timeouts().min();
 
+            for session in self.session_store.values() {
+                println!("{session}");
+            }
+
             tokio::select! {
                 _ = async { sleep_until(next_timeout.as_ref().unwrap().deadline).await }, if next_timeout.is_some() => {
                     let timeout = next_timeout.unwrap();
@@ -268,6 +272,7 @@ impl SocketState {
                 }
                 result = self.udpsocket.recv_from(&mut buf) => {
                     let (size, addr) = result?;
+                    println!("received: {}", String::from_utf8(buf[..size].to_vec()).unwrap());
                     self.process_udp(&buf[..size], addr, &stream_writer).await?;
                 }
                 Some(datagram) = from_stream.recv() => {
@@ -365,6 +370,7 @@ impl SocketState {
         udpsocket: &UdpSocket,
         to: SocketAddr,
     ) -> io::Result<()> {
+        println!("sending: /data/{session_id}/{pos}/{} bytes", data.len());
         let mut pieces = Vec::new();
         let mut remaining = data;
         let mut chunk;
@@ -377,6 +383,8 @@ impl SocketState {
         let mut current_pos = pos;
         for piece in pieces {
             let data = Data::new(session_id, current_pos, piece);
+            // sleep a few millisecs to avoid the "No buffer space available" error
+            sleep(Duration::from_millis(10)).await;
             udpsocket.send_to(data.encode().as_bytes(), to).await?;
             current_pos += piece.len() as i32;
         }
@@ -462,7 +470,6 @@ impl SocketState {
             match msg {
                 Decoded::Connect(connect) => {
                     if let Some(session) = self.session_store.get(&connect.session) {
-                        // self.udpsocket.send_to(Ack::new(session.id, 0).encode().as_bytes(), session.peer).await?;
                         self.ack_session(session).await?;
                     } else {
                         self.new_session(connect.session, peer, stream_writer.clone())
