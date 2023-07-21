@@ -130,10 +130,10 @@ struct Datagram {
 struct Session {
     id: i32,
     // last ack sent to peer
-    last_ack_sent: i32,
+    bytes_acked: i32,
     peer: SocketAddr,
     // starting position of next data to send to peer
-    next_pos: i32,
+    bytes_sent: i32,
     to_stream: Sender<Datagram>,
     outstanding: String,
     rtx_to: Option<Instant>,
@@ -153,8 +153,8 @@ impl Display for Session {
             f,
             "id={} last_ack_sent={} next_pos={} oustanding={} rtx_to={:?} session_to={:?}",
             self.id,
-            self.last_ack_sent,
-            self.next_pos,
+            self.bytes_acked,
+            self.bytes_sent,
             self.outstanding.len(),
             rtx_in,
             session_in
@@ -277,8 +277,8 @@ impl SocketState {
                 }
                 Some(datagram) = from_stream.recv() => {
                     if let Some(session) = self.session_store.get_mut(&datagram.session_id) {
-                         Self::send_data(session.id, session.next_pos, &datagram.data, &self.udpsocket, session.peer).await?;
-                         session.next_pos += datagram.data.len() as i32;
+                         Self::send_data(session.id, session.bytes_sent, &datagram.data, &self.udpsocket, session.peer).await?;
+                         session.bytes_sent += datagram.data.len() as i32;
                          session.outstanding += &datagram.data;
                          session.reset_rtx_to(self.rtx_to);
                          session.reset_session_to(self.session_to);
@@ -293,7 +293,7 @@ impl SocketState {
             if !session.outstanding.is_empty() {
                 Self::send_data(
                     session.id,
-                    session.next_pos - session.outstanding.len() as i32,
+                    session.bytes_sent - session.outstanding.len() as i32,
                     &session.outstanding,
                     &self.udpsocket,
                     session.peer,
@@ -331,8 +331,8 @@ impl SocketState {
 
         let session = session.unwrap();
 
-        let first_outstanding = session.next_pos - session.outstanding.len() as i32;
-        if new_ack > session.next_pos {
+        let first_outstanding = session.bytes_sent - session.outstanding.len() as i32;
+        if new_ack > session.bytes_sent {
             return self.close_session(session.id, None).await;
         }
 
@@ -341,13 +341,13 @@ impl SocketState {
         }
 
         let session = self.session_store.get_mut(&session_id).unwrap();
-        session.cancel_rtx_to();
 
         let acked = new_ack - first_outstanding;
         session.outstanding.drain(..acked as usize);
 
         if session.outstanding.is_empty() {
             session.cancel_session_to();
+            session.cancel_rtx_to();
         } else {
             // Partial ack
             Self::send_data(
@@ -394,7 +394,7 @@ impl SocketState {
     async fn ack_session(&self, session: &Session) -> io::Result<()> {
         self.udpsocket
             .send_to(
-                Ack::new(session.id, session.last_ack_sent)
+                Ack::new(session.id, session.bytes_acked)
                     .encode()
                     .as_bytes(),
                 session.peer,
@@ -413,8 +413,8 @@ impl SocketState {
 
         let session = Session {
             id: session_id,
-            last_ack_sent: 0,
-            next_pos: 0,
+            bytes_acked: 0,
+            bytes_sent: 0,
             peer,
             to_stream,
             outstanding: String::new(),
@@ -437,8 +437,8 @@ impl SocketState {
     async fn handle_data(&mut self, data: Data, peer: SocketAddr) -> io::Result<()> {
         let mut stream_gone = false;
         if let Some(session) = self.session_store.get_mut(&data.session) {
-            if session.last_ack_sent == data.pos {
-                session.last_ack_sent += data.data.len() as i32;
+            if session.bytes_acked == data.pos {
+                session.bytes_acked += data.data.len() as i32;
                 stream_gone = session
                     .to_stream
                     .send(Datagram {
