@@ -336,7 +336,6 @@ impl SocketState {
         }
 
         let session = self.session_store.get_mut(&session_id).unwrap();
-
         let acked = new_ack - first_outstanding;
         session.outstanding.drain(..acked as usize);
 
@@ -490,7 +489,7 @@ mod tests {
     use crate::lrcp::{Error, Socket, Stream, MAX_DATA_LEN};
     use std::time::Duration;
     use tokio::net::UdpSocket;
-    use tokio::time::timeout;
+    use tokio::time::{sleep, timeout};
 
     const SESSION: i32 = 1234567;
     const RTX_TO: u64 = 3_000;
@@ -649,6 +648,9 @@ mod tests {
         peer.send(format!("/ack/{SESSION}/11/").as_bytes())
             .await
             .unwrap();
+
+        // give time to server to process the ack
+        sleep(Duration::from_millis(10)).await;
 
         tokio::time::pause();
         tokio::time::advance(Duration::from_millis(SESSION_TO)).await;
