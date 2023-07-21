@@ -336,7 +336,7 @@ impl SocketState {
             return self.close_session(session.id, None).await;
         }
 
-        if new_ack < first_outstanding {
+        if new_ack <= first_outstanding {
             return Ok(());
         }
 
