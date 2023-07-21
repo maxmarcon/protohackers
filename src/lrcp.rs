@@ -254,10 +254,6 @@ impl SocketState {
         loop {
             let next_timeout = self.timeouts().min();
 
-            for session in self.session_store.values() {
-                println!("{session}");
-            }
-
             tokio::select! {
                 _ = async { sleep_until(next_timeout.as_ref().unwrap().deadline).await }, if next_timeout.is_some() => {
                     let timeout = next_timeout.unwrap();
@@ -272,7 +268,6 @@ impl SocketState {
                 }
                 result = self.udpsocket.recv_from(&mut buf) => {
                     let (size, addr) = result?;
-                    println!("received: {}", String::from_utf8(buf[..size].to_vec()).unwrap());
                     self.process_udp(&buf[..size], addr, &stream_writer).await?;
                 }
                 Some(datagram) = from_stream.recv() => {
@@ -370,7 +365,6 @@ impl SocketState {
         udpsocket: &UdpSocket,
         to: SocketAddr,
     ) -> io::Result<()> {
-        println!("sending: /data/{session_id}/{pos}/{} bytes", data.len());
         let mut pieces = Vec::new();
         let mut remaining = data;
         let mut chunk;
