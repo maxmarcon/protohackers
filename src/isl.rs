@@ -60,7 +60,8 @@ impl Stream {
             self.tcpstream.read_buf(&mut self.buf).await?;
             self.cipher.decode(&mut self.buf, self.bytes_recv);
             self.bytes_recv += self.buf.len();
-            self.decoded_buf.append(&mut self.buf.drain(..).as_slice().to_vec());
+            self.decoded_buf
+                .append(&mut self.buf.drain(..).as_slice().to_vec());
         }
     }
 

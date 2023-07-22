@@ -60,7 +60,7 @@ impl Cipher {
                     Error::MissingOperand(op_pos)
                 })?),
                 0x03 => Op::XorPos,
-                0x04 => Op::Add(*spec.get(op_pos + 1).ok_or_else(||{
+                0x04 => Op::Add(*spec.get(op_pos + 1).ok_or_else(|| {
                     println!("faulty spec: {:?}", spec);
                     Error::MissingOperand(op_pos)
                 })?),
@@ -95,8 +95,7 @@ impl Cipher {
 
     pub fn is_noop(&self) -> bool {
         for byte in 0..255 {
-            if Self::apply(byte, &self.encoding_ops, 1) != byte
-            {
+            if Self::apply(byte, &self.encoding_ops, 1) != byte {
                 return false;
             }
         }
