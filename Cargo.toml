@@ -28,6 +28,11 @@ name = "speed"
 [[bin]]
 name = "reversal"
 
+[[bin]]
+name = "isl"
+
+
+
 [dependencies]
 async-stream = "0.3.5"
 clap = { version = "4.3.0", features = ["derive"] }

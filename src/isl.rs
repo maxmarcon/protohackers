@@ -1,158 +1,72 @@
+mod cipher;
+
+use cipher::Cipher;
+use std::io;
+use std::io::ErrorKind;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-struct Stream {
+pub struct Stream {
     tcpstream: TcpStream,
-    cipherspec: Vec<u8>,
-    bytes_recv: u32,
-    bytes_sent: u32,
+    cipher: Cipher,
+    buf: Vec<u8>,
+    bytes_recv: usize,
+    bytes_sent: usize,
 }
 
 impl Stream {
-    pub fn new(tcpstream: TcpStream) -> Self {
-        Self {
+    pub async fn new(mut tcpstream: TcpStream) -> Result<Self, io::Error> {
+        let mut buf = Vec::new();
+        let cipher;
+        loop {
+            tcpstream.read_buf(&mut buf).await?;
+            if let Some((end_of_cipher, _)) =
+                buf.iter().enumerate().find(|(_, byte)| **byte == 0x00)
+            {
+                cipher = Cipher::new(buf.drain(..end_of_cipher).as_slice())?;
+                buf.drain(..1);
+                break;
+            }
+        }
+
+        if cipher.is_noop() {
+            return Err(cipher::Error::Noop.into());
+        }
+
+        Ok(Self {
             tcpstream,
-            cipherspec: Vec::new(),
+            cipher,
+            buf,
             bytes_recv: 0,
             bytes_sent: 0,
-        }
-    }
-}
-
-mod cipher {
-    use std::ops::BitXor;
-
-    #[derive(Clone, Copy)]
-    enum Op {
-        Reverse,
-        Xor(u8),
-        XorPos,
-        Add(u8),
-        AddPos,
-        Sub(u8),
-        SubPos,
+        })
     }
 
-    #[derive(Debug)]
-    pub enum Error {
-        InvalidOp(u8),
-        MissingOperand(usize),
-    }
-
-    type Result<T> = std::result::Result<T, Error>;
-
-    pub struct Cipher {
-        encoding_ops: Vec<Op>,
-        decoding_ops: Vec<Op>,
-    }
-
-    impl Cipher {
-        pub fn new(spec: &[u8]) -> Result<Self> {
-            let mut encoding_ops = Vec::new();
-            let mut op_pos = 0;
-            while op_pos < spec.len() {
-                let op_byte = spec[op_pos];
-                let op = match op_byte {
-                    0x01 => Op::Reverse,
-                    0x02 => Op::Xor(*spec.get(op_pos + 1).ok_or(Error::MissingOperand(op_pos))?),
-                    0x03 => Op::XorPos,
-                    0x04 => Op::Add(*spec.get(op_pos + 1).ok_or(Error::MissingOperand(op_pos))?),
-                    0x05 => Op::AddPos,
-                    _ => return Err(Error::InvalidOp(op_byte)),
-                };
-                match op {
-                    Op::Xor(_) | Op::Add(_) => op_pos += 2,
-                    _ => op_pos += 1,
-                }
-                encoding_ops.push(op);
+    pub async fn read_line(&mut self) -> io::Result<String> {
+        loop {
+            if let Some((end_of_line, _)) = self
+                .buf
+                .iter()
+                .enumerate()
+                .find(|(_, byte)| **byte == b'\n')
+            {
+                let mut line = self.buf.drain(..end_of_line).as_slice().to_vec();
+                self.buf.drain(..1);
+                self.cipher.decode(&mut line, self.bytes_recv);
+                self.bytes_recv += line.len() + 1;
+                let decoded_line = String::from_utf8(line.to_vec())
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+                return Ok(decoded_line);
             }
-            let decoding_ops = Self::reverse(&encoding_ops);
-
-            Ok(Self {
-                encoding_ops,
-                decoding_ops,
-            })
-        }
-
-        pub fn encode(&self, bytes: &mut [u8], stream_pos: usize) {
-            for (pos, byte) in bytes.iter_mut().enumerate() {
-                *byte = Self::apply(*byte, &self.encoding_ops, pos + stream_pos);
-            }
-        }
-
-        pub fn decode(&self, bytes: &mut [u8], stream_pos: usize) {
-            for (pos, byte) in bytes.iter_mut().enumerate() {
-                *byte = Self::apply(*byte, &self.decoding_ops, pos + stream_pos);
-            }
-        }
-
-        pub fn is_noop(&self) -> bool {
-            for byte in 0..255 {
-                if Self::apply(byte, &self.encoding_ops, 1)
-                    != Self::apply(byte, &self.decoding_ops, 1)
-                {
-                    return false;
-                }
-            }
-            true
-        }
-
-        fn reverse(ops: &[Op]) -> Vec<Op> {
-            ops.iter()
-                .map(|op| match op {
-                    Op::Add(other) => Op::Sub(*other),
-                    Op::AddPos => Op::SubPos,
-                    other_op => *other_op,
-                })
-                .rev()
-                .collect::<Vec<_>>()
-        }
-
-        fn apply(byte: u8, ops: &[Op], stream_pos: usize) -> u8 {
-            let mut byte = byte;
-            for op in ops.iter() {
-                match op {
-                    Op::Reverse => byte = byte.reverse_bits(),
-                    Op::Xor(other) => byte = byte.bitxor(other),
-                    Op::XorPos => byte = byte.bitxor(stream_pos as u8),
-                    Op::Add(other) => byte = byte.wrapping_add(*other),
-                    Op::AddPos => byte = byte.wrapping_add(stream_pos as u8),
-                    Op::Sub(other) => byte = byte.wrapping_sub(*other),
-                    Op::SubPos => byte = byte.wrapping_sub(stream_pos as u8),
-                }
-            }
-            byte
+            self.tcpstream.read_buf(&mut self.buf).await?;
         }
     }
 
-    #[cfg(test)]
-    mod tests {
-        use crate::isl::cipher::Cipher;
-
-        #[test]
-        fn encoding_and_decoding() {
-            let cipher = Cipher::new(&[0x02, 0x10, 0x01, 0x03, 0x05, 0x04, 0xF1]).unwrap();
-
-            let cleartext = b"10x toy car,15x dog on a string,4x inflatable motorcycle";
-            let mut encoded = cleartext.to_owned();
-
-            cipher.encode(&mut encoded[..], 10);
-
-            assert_ne!(cleartext[..], encoded);
-
-            cipher.decode(&mut encoded[..], 10);
-
-            assert_eq!(cleartext[..], encoded);
-        }
-
-        #[test]
-        fn noop_detection() {
-            let valid_cipher = Cipher::new(&[0x02, 0x10, 0x01, 0x03, 0x05, 0x04, 0xF1]).unwrap();
-
-            assert!(!valid_cipher.is_noop());
-
-            let noop_cipher = Cipher::new(&[0x02, 0xa0, 0x02, 0x0b, 0x02, 0xab]).unwrap();
-
-            assert!(noop_cipher.is_noop());
-        }
+    pub async fn write_line(&mut self, line: &str) -> io::Result<()> {
+        let mut line = (line.to_owned() + "\n").as_bytes().to_vec();
+        self.cipher.encode(&mut line, self.bytes_sent);
+        self.bytes_sent += line.len();
+        self.tcpstream.write_all(&line).await?;
+        Ok(())
     }
 }
