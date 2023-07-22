@@ -5,6 +5,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::ops::Add;
 use std::time::Duration;
@@ -35,6 +36,12 @@ impl Display for Error {
 impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<Error> for io::Error {
+    fn from(error: Error) -> Self {
+        io::Error::new(ErrorKind::Other, error)
+    }
+}
 
 pub struct Socket {
     join_handle: JoinHandle<()>,

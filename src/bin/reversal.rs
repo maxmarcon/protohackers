@@ -2,7 +2,6 @@ use protohackers::lrcp;
 use protohackers::lrcp::{Socket, Stream};
 use protohackers::{CliArgs, Parser, Server};
 use std::io;
-use std::io::ErrorKind;
 use tokio::net::UdpSocket;
 
 fn main() {
@@ -21,12 +20,8 @@ async fn handler(udpsocket: std::net::UdpSocket, _max_size: usize) -> io::Result
     let mut lrcp = Socket::new(udpsocket, 3_000, 60_000);
 
     loop {
-        match lrcp.accept().await {
-            Ok(stream) => {
-                tokio::spawn(async move { handle_stream(stream).await });
-            }
-            Err(error) => return Err(io::Error::new(ErrorKind::Other, error)),
-        }
+        let stream = lrcp.accept().await?;
+        tokio::spawn(async move { handle_stream(stream).await.unwrap() });
     }
 }
 
