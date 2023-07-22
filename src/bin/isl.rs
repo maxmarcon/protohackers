@@ -10,7 +10,7 @@ fn main() {
     let args = CliArgs::parse();
 
     let handler = Arc::new(move |tcpstream| -> BoxFuture<'static, io::Result<()>> {
-        Box::pin(async { handle_stream(tcpstream).await })
+        Box::pin(async { handle_stream(tcpstream).await.unwrap(); Ok(()) })
     });
 
     Server::new(args.port, args.max_connections, args.max_udp_size)

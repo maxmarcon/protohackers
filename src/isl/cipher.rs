@@ -3,7 +3,7 @@ use std::io::ErrorKind;
 use std::ops::BitXor;
 use tokio::io;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Op {
     Reverse,
     Xor(u8),
@@ -41,6 +41,7 @@ impl From<Error> for io::Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug)]
 pub struct Cipher {
     encoding_ops: Vec<Op>,
     decoding_ops: Vec<Op>,
@@ -54,9 +55,15 @@ impl Cipher {
             let op_byte = spec[op_pos];
             let op = match op_byte {
                 0x01 => Op::Reverse,
-                0x02 => Op::Xor(*spec.get(op_pos + 1).ok_or(Error::MissingOperand(op_pos))?),
+                0x02 => Op::Xor(*spec.get(op_pos + 1).ok_or_else(|| {
+                    println!("faulty spec: {:?}", spec);
+                    Error::MissingOperand(op_pos)
+                })?),
                 0x03 => Op::XorPos,
-                0x04 => Op::Add(*spec.get(op_pos + 1).ok_or(Error::MissingOperand(op_pos))?),
+                0x04 => Op::Add(*spec.get(op_pos + 1).ok_or_else(||{
+                    println!("faulty spec: {:?}", spec);
+                    Error::MissingOperand(op_pos)
+                })?),
                 0x05 => Op::AddPos,
                 _ => return Err(Error::InvalidOp(op_byte)),
             };
@@ -88,7 +95,7 @@ impl Cipher {
 
     pub fn is_noop(&self) -> bool {
         for byte in 0..255 {
-            if Self::apply(byte, &self.encoding_ops, 1) != Self::apply(byte, &self.decoding_ops, 1)
+            if Self::apply(byte, &self.encoding_ops, 1) != byte
             {
                 return false;
             }
