@@ -8,6 +8,6 @@ Each problem's solution is implemented as a separate binary crate named after th
 cargo run --bin <binname>
 ```
 
-where binname can be one of (so far): `smoketest`, `primetime`, `meanstoanend`, `budgetchat`, `unusualdb`, `mob`, `speed`, `reversal`, `isl`
+where binname can be one of (so far): `smoketest`, `primetime`, `meanstoanend`, `budgetchat`, `unusualdb`, `mob`, `speed`, `reversal`, `insecure`
 
 Run ```cargo run --bin <crate> -- -h``` to see a list of options.
