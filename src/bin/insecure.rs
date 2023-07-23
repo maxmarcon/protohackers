@@ -47,8 +47,8 @@ fn find_toy(line: &str) -> &str {
     }
     toys.push(from..line.len());
 
-    toys.iter()
-        .max_by_key(|&range| {
+    toys.into_iter()
+        .max_by_key(|range| {
             let pos = line[range.start..range.end].find('x').unwrap();
             u32::from_str(&line[range.start..range.start + pos]).unwrap()
         })
