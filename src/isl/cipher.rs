@@ -55,15 +55,9 @@ impl Cipher {
             let op_byte = spec[op_pos];
             let op = match op_byte {
                 0x01 => Op::Reverse,
-                0x02 => Op::Xor(*spec.get(op_pos + 1).ok_or_else(|| {
-                    println!("faulty spec: {:?}", spec);
-                    Error::MissingOperand(op_pos)
-                })?),
+                0x02 => Op::Xor(*spec.get(op_pos + 1).ok_or(Error::MissingOperand(op_pos))?),
                 0x03 => Op::XorPos,
-                0x04 => Op::Add(*spec.get(op_pos + 1).ok_or_else(|| {
-                    println!("faulty spec: {:?}", spec);
-                    Error::MissingOperand(op_pos)
-                })?),
+                0x04 => Op::Add(*spec.get(op_pos + 1).ok_or(Error::MissingOperand(op_pos))?),
                 0x05 => Op::AddPos,
                 _ => return Err(Error::InvalidOp(op_byte)),
             };
