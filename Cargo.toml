@@ -29,7 +29,7 @@ name = "speed"
 name = "reversal"
 
 [[bin]]
-name = "isl"
+name = "insecure"
 
 
 

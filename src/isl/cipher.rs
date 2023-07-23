@@ -73,6 +73,10 @@ impl Cipher {
             }
             encoding_ops.push(op);
         }
+        if Self::is_noop(&encoding_ops) {
+            return Err(Error::Noop);
+        }
+
         let decoding_ops = Self::reverse(&encoding_ops);
 
         Ok(Self {
@@ -93,9 +97,9 @@ impl Cipher {
         }
     }
 
-    pub fn is_noop(&self) -> bool {
+    fn is_noop(ops: &[Op]) -> bool {
         for byte in 0..255 {
-            if Self::apply(byte, &self.encoding_ops, 1) != byte {
+            if Self::apply(byte, ops, 1) != byte {
                 return false;
             }
         }
@@ -133,6 +137,7 @@ impl Cipher {
 #[cfg(test)]
 mod tests {
     use super::Cipher;
+    use crate::isl::cipher::Error;
 
     #[test]
     fn encoding_and_decoding() {
@@ -152,12 +157,8 @@ mod tests {
 
     #[test]
     fn noop_detection() {
-        let valid_cipher = Cipher::new(&[0x02, 0x10, 0x01, 0x03, 0x05, 0x04, 0xF1]).unwrap();
+        let noop_cipher = Cipher::new(&[0x02, 0xa0, 0x02, 0x0b, 0x02, 0xab]);
 
-        assert!(!valid_cipher.is_noop());
-
-        let noop_cipher = Cipher::new(&[0x02, 0xa0, 0x02, 0x0b, 0x02, 0xab]).unwrap();
-
-        assert!(noop_cipher.is_noop());
+        assert!(matches!(noop_cipher, Err(Error::Noop)));
     }
 }

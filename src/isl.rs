@@ -2,15 +2,13 @@ mod cipher;
 
 use cipher::Cipher;
 use std::io;
-use std::io::ErrorKind;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub struct Stream {
     tcpstream: TcpStream,
     cipher: Cipher,
-    buf: Vec<u8>,
-    decoded_buf: Vec<u8>,
+    initially_buffered: Vec<u8>,
     bytes_recv: usize,
     bytes_sent: usize,
 }
@@ -28,58 +26,45 @@ impl Stream {
             }
         }
 
-        if cipher.is_noop() {
-            return Err(cipher::Error::Noop.into());
-        }
+        cipher.decode(&mut buf, 0);
+        let initially_buffered_len = buf.len();
 
         Ok(Self {
             tcpstream,
             cipher,
-            buf,
-            decoded_buf: Vec::new(),
-            bytes_recv: 0,
+            initially_buffered: buf,
+            bytes_recv: initially_buffered_len,
             bytes_sent: 0,
         })
     }
 
-    pub async fn read_line(&mut self) -> io::Result<String> {
-        loop {
-            if let Some((end_of_line, _)) = self
-                .decoded_buf
-                .iter()
-                .enumerate()
-                .find(|(_, byte)| **byte == b'\n')
-            {
-                let line_bytes = self.decoded_buf.drain(..end_of_line).as_slice().to_vec();
-                let line = String::from_utf8(line_bytes.to_vec())
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-                self.decoded_buf.drain(..1);
-                println!("decoded: {}", line);
-                return Ok(line);
-            }
-            self.tcpstream.read_buf(&mut self.buf).await?;
-            self.cipher.decode(&mut self.buf, self.bytes_recv);
-            self.bytes_recv += self.buf.len();
-            self.decoded_buf
-                .append(&mut self.buf.drain(..).as_slice().to_vec());
+    pub async fn read_buf(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        if !self.initially_buffered.is_empty() {
+            let buffered = self.initially_buffered.len();
+            buf.append(&mut self.initially_buffered);
+            return Ok(buffered);
         }
+        let to_decode_start = buf.len();
+        let read = self.tcpstream.read_buf(buf).await?;
+        if read > 0 {
+            self.cipher
+                .decode(&mut buf[to_decode_start..], self.bytes_recv);
+            self.bytes_recv += read;
+        }
+        Ok(read)
     }
 
-    pub async fn write_line(&mut self, line: &str) -> io::Result<()> {
-        println!("sent: {}", line);
-        let mut line = (line.to_owned() + "\n").as_bytes().to_vec();
-        self.cipher.encode(&mut line, self.bytes_sent);
-        self.bytes_sent += line.len();
-        self.tcpstream.write_all(&line).await?;
+    pub async fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        let mut encode_buf = buf.to_owned();
+        self.cipher.encode(&mut encode_buf, self.bytes_sent);
+        self.tcpstream.write_all(&encode_buf).await?;
+        self.bytes_sent += encode_buf.len();
         Ok(())
     }
 
     fn find_end_of_cipher(bytes: &[u8]) -> Option<usize> {
-        for i in 0..bytes.len() {
-            if bytes[i] == 0x00 && (i == 0 || (bytes[i - 1] != 0x02 && bytes[i - 1] != 0x04)) {
-                return Some(i);
-            }
-        }
-        None
+        (0..bytes.len()).find(|&i| {
+            bytes[i] == 0x00 && (i == 0 || (bytes[i - 1] != 0x02 && bytes[i - 1] != 0x04))
+        })
     }
 }
