@@ -1,6 +1,7 @@
 mod async_lib;
 pub mod budgetchat;
 pub mod isl;
+pub mod jobcentre;
 pub mod lrcp;
 pub mod speed;
 
