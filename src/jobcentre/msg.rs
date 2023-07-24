@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value::Object;
-use serde_json::{from_str, json, Value};
+use serde_json::{from_str, from_value, json, Value};
 
 #[derive(Debug)]
 pub enum Msg {
-    P(Put),
+    Put(Put),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -15,7 +15,7 @@ pub struct Put {
 }
 
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     Unknown,
     Serde(serde_json::Error),
 }
@@ -28,29 +28,28 @@ impl From<serde_json::Error> for Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn parse(str: &str) -> Result<Msg> {
+pub fn parse(str: &str) -> Result<Msg> {
     if let Object(map) = from_str(str)? {
-        let msg = match map.get("request") {
-            Some(value) if *value == json!("put") => Msg::P(from_str::<Put>(str)?),
-            _ => return Err(Error::Unknown),
-        };
-        return Ok(msg);
+        match map.get("request") {
+            Some(value) if *value == json!("put") => Ok(Msg::Put(from_value(Object(map))?)),
+            _ => Err(Error::Unknown),
+        }
+    } else {
+        Err(Error::Unknown)
     }
-    Err(Error::Unknown)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{parse, Msg, Put};
     use crate::jobcentre::msg::Error;
-    use serde_json::json;
 
     #[test]
     fn parse_put_msg() {
         let put_msg = r#"
            {"request": "put", "queue": "q1", "job": {}, "pri": 10}
         "#;
-        assert!(matches!(parse(put_msg), Ok(Msg::P(_))));
+        assert!(matches!(parse(put_msg), Ok(Msg::Put(_))));
     }
 
     #[test]
