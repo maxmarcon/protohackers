@@ -1,6 +1,9 @@
+use crate::jobcentre::msg::Error::Utf8Error;
 use serde::{Deserialize, Serialize};
-use serde_json::{from_str, from_value, json, Value};
-use std::str::LinesAny;
+use serde_json::{from_str, from_value, json, to_string, Value};
+use std::fmt::{Display, Formatter};
+use std::io;
+use std::string::FromUtf8Error;
 
 #[derive(Debug)]
 pub enum Msg {
@@ -76,6 +79,12 @@ impl Response {
     }
 }
 
+impl Display for Response {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", to_string(self).unwrap())
+    }
+}
+
 #[derive(Serialize, Debug)]
 pub struct GetResponse {
     status: String,
@@ -87,8 +96,22 @@ pub struct GetResponse {
 
 #[derive(Debug)]
 pub enum Error {
-    Unknown,
+    InvalidMsg,
     Serde(serde_json::Error),
+    Io(io::Error),
+    Utf8Error(FromUtf8Error),
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Error::Io(value)
+    }
+}
+
+impl From<FromUtf8Error> for Error {
+    fn from(value: FromUtf8Error) -> Self {
+        Utf8Error(value)
+    }
 }
 
 impl From<serde_json::Error> for Error {
@@ -97,7 +120,7 @@ impl From<serde_json::Error> for Error {
     }
 }
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn parse(str: &str) -> Result<Msg> {
     if let Value::Object(mut map) = from_str(str)? {
@@ -113,10 +136,10 @@ pub fn parse(str: &str) -> Result<Msg> {
             Some(value) if *value == json!("abort") => {
                 Ok(Msg::Abort(from_value(Value::Object(map))?))
             }
-            _ => Err(Error::Unknown),
+            _ => Err(Error::InvalidMsg),
         }
     } else {
-        Err(Error::Unknown)
+        Err(Error::InvalidMsg)
     }
 }
 
@@ -177,6 +200,6 @@ mod tests {
         let invalid_msg = r#"
            {"request": "unknown", "job": {}, "pri": 10}
         "#;
-        assert!(matches!(parse(invalid_msg), Err(Error::Unknown)));
+        assert!(matches!(parse(invalid_msg), Err(Error::InvalidMsg)));
     }
 }

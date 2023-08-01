@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-mod msg;
+pub mod msg;
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Job {
