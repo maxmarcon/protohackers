@@ -3,7 +3,7 @@ use std::collections::BinaryHeap;
 
 mod msg;
 
-#[derive(Eq, Ord, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Job {
     id: u32,
     prio: u32,
@@ -15,6 +15,12 @@ pub struct Job {
 impl PartialOrd for Job {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.prio.partial_cmp(&other.prio)
+    }
+}
+
+impl Ord for Job {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.prio.cmp(&other.prio)
     }
 }
 
@@ -48,14 +54,28 @@ pub struct Queue {
 }
 
 impl Queue {
-    pub fn peek(&mut self) -> Option<&Job> {
+    pub fn push(&mut self, job: Job) {
+        self.heap.push(job)
+    }
+
+    pub fn peek(&mut self) -> Option<Job> {
         self.skip_deleted();
-        self.heap.peek()
+        self.heap.peek().cloned()
     }
 
     pub fn pop(&mut self) -> Option<Job> {
         self.skip_deleted();
         self.heap.pop()
+    }
+
+    pub fn pop_multi(queues: &mut [Self]) -> Option<Job> {
+        queues.iter_mut().for_each(Queue::skip_deleted);
+
+        queues
+            .iter_mut()
+            .filter(|q| q.heap.peek().is_some())
+            .max_by(|q1, q2| q1.heap.peek().unwrap().cmp(q2.heap.peek().unwrap()))
+            .and_then(|q| q.heap.pop())
     }
 
     fn skip_deleted(&mut self) {
@@ -73,8 +93,8 @@ mod tests {
     fn peek_with_no_deleted_jobs() {
         let mut queue = Queue::default();
 
-        queue.heap.push(Job::new(1, 10, "foo"));
-        queue.heap.push(Job::new(2, 100, "foo"));
+        queue.push(Job::new(1, 10, "foo"));
+        queue.push(Job::new(2, 100, "foo"));
 
         assert!(queue.peek().is_some_and(|j| j.id == 2));
     }
@@ -83,8 +103,8 @@ mod tests {
     fn pop_with_no_deleted_jobs() {
         let mut queue = Queue::default();
 
-        queue.heap.push(Job::new(1, 10, "foo"));
-        queue.heap.push(Job::new(2, 100, "foo"));
+        queue.push(Job::new(1, 10, "foo"));
+        queue.push(Job::new(2, 100, "foo"));
 
         assert!(queue.pop().is_some_and(|j| j.id == 2));
         assert!(queue.pop().is_some_and(|j| j.id == 1));
@@ -95,14 +115,14 @@ mod tests {
     fn peek_with_deleted_jobs() {
         let mut queue = Queue::default();
 
-        queue.heap.push(Job::new(1, 10, "foo"));
-        queue.heap.push(Job::new(2, 100, "foo"));
+        queue.push(Job::new(1, 10, "foo"));
+        queue.push(Job::new(2, 100, "foo"));
         let mut job = Job::new(3, 200, "foo");
         job.delete();
-        queue.heap.push(job);
+        queue.push(job);
         let mut job = Job::new(4, 300, "foo");
         job.delete();
-        queue.heap.push(job);
+        queue.push(job);
 
         assert!(queue.peek().is_some_and(|j| j.id == 2));
     }
@@ -111,17 +131,44 @@ mod tests {
     fn pop_with_deleted_jobs() {
         let mut queue = Queue::default();
 
-        queue.heap.push(Job::new(1, 10, "foo"));
-        queue.heap.push(Job::new(2, 100, "foo"));
+        queue.push(Job::new(1, 10, "foo"));
+        queue.push(Job::new(2, 100, "foo"));
         let mut job = Job::new(3, 200, "foo");
         job.delete();
-        queue.heap.push(job);
+        queue.push(job);
         let mut job = Job::new(4, 300, "foo");
         job.delete();
-        queue.heap.push(job);
+        queue.push(job);
 
         assert!(queue.pop().is_some_and(|j| j.id == 2));
         assert!(queue.pop().is_some_and(|j| j.id == 1));
         assert_eq!(queue.pop(), None);
+    }
+
+    #[test]
+    fn pop_multi() {
+        let mut queue1 = Queue::default();
+
+        queue1.push(Job::new(1, 10, "foo"));
+        queue1.push(Job::new(2, 100, "foo"));
+        let mut job = Job::new(3, 200, "foo");
+        job.delete();
+        queue1.push(job);
+        let mut job = Job::new(4, 300, "foo");
+        job.delete();
+        queue1.push(job);
+
+        let mut queue2 = Queue::default();
+
+        queue2.push(Job::new(5, 10, "foo"));
+        queue2.push(Job::new(6, 101, "foo"));
+        let mut job = Job::new(7, 200, "foo");
+        job.delete();
+        queue2.push(job);
+        let mut job = Job::new(8, 300, "foo");
+        job.delete();
+        queue2.push(job);
+
+        assert!(Queue::pop_multi(&mut [queue1, queue2]).is_some_and(|j| j.id == 6));
     }
 }
