@@ -69,8 +69,8 @@ async fn handle_stream(
     job_state: Arc<RwLock<HashMap<u32, JobState>>>,
     client_id: Arc<Mutex<u32>>,
     job_id: Arc<Mutex<u32>>,
-    sender: Sender<Job>,
-    receiver: Receiver<Job>,
+    sender: Sender<(u32, Job)>,
+    receiver: Receiver<(u32, Job)>,
 ) -> io::Result<()> {
     let my_client_id = {
         let mut id = client_id.lock().unwrap();
@@ -112,7 +112,7 @@ fn process_message(
     job_id: &Arc<Mutex<u32>>,
     queues: &QueueMap,
     job_state: &Arc<RwLock<HashMap<u32, JobState>>>,
-    sender: &Sender<Job>,
+    sender: &Sender<(u32, Job)>,
 ) -> Option<Response> {
     match msg {
         msg::Msg::Put(put) => {
@@ -136,7 +136,7 @@ fn process_message(
                         .write()
                         .unwrap()
                         .insert(job.id, JobState::Assigned(client_id));
-                    sender.send(job).unwrap();
+                    sender.send((client_id, job)).unwrap();
                     (
                         None,
                         Some(client_id),
@@ -159,12 +159,7 @@ fn process_message(
             let mut queues = queues.write().unwrap();
             let mut job_state = job_state.write().unwrap();
             for queue_name in get.queues.iter() {
-                if !queues.contains_key(queue_name) {
-                    return Some(Response::error(&format!(
-                        "queue {} does nto exist",
-                        queue_name
-                    )));
-                }
+                queues.entry(queue_name.clone()).or_insert(Queue::default());
             }
             if let Some(queue_with_max_prio_job) = get
                 .queues
@@ -205,9 +200,10 @@ fn process_message(
                     job_state.insert(abort.id, JobState::Unassigned);
                     Some(Response::ok())
                 }
-                Some(JobState::Assigned(_)) => {
-                    Some(Response::error("you are not working on this job!"))
-                }
+                Some(JobState::Assigned(_)) => Some(Response::error(&format!(
+                    "you are client {} and cannot abort job {} because not working on it",
+                    client_id, abort.id
+                ))),
                 _ => Some(Response::no_job()),
             }
         }
@@ -234,8 +230,8 @@ async fn message_loop(
     queues: QueueMap,
     job_state: &Arc<RwLock<HashMap<u32, JobState>>>,
     job_id: Arc<Mutex<u32>>,
-    sender: Sender<Job>,
-    mut receiver: Receiver<Job>,
+    sender: Sender<(u32, Job)>,
+    mut receiver: Receiver<(u32, Job)>,
 ) -> io::Result<()> {
     let (tcpreader, mut tcpwriter) = tcpstream.split();
 
@@ -257,8 +253,8 @@ async fn message_loop(
                }
             }
             job = receiver.recv() => {
-                let job = job.unwrap();
-                if job_state.read().unwrap().get(&job.id) == Some(&JobState::Assigned(client_id)) {
+                let (for_client_id, job) = job.unwrap();
+                if for_client_id == client_id {
                     tcpwriter.write_all(msg::Response::ok_and_job(job).to_string().as_bytes()).await?
                 }
             }
