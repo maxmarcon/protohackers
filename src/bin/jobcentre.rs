@@ -174,7 +174,7 @@ fn process_message(
                     .pop(&job_state)
                     .unwrap();
                 job_state.insert(job.id, JobState::Assigned(client_id));
-                Some(Response::ok_and_id(job.id))
+                Some(Response::ok_and_job(job))
             } else if get.wait {
                 put_client_in_wait(client_id, &get.queues, queues);
                 None
