@@ -1,4 +1,5 @@
 use crate::jobcentre::msg::Error::Utf8Error;
+use crate::jobcentre::Job;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, from_value, json, to_string, Value};
 use std::fmt::{Display, Formatter};
@@ -15,25 +16,25 @@ pub enum Msg {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Put {
-    queue: String,
-    job: Value,
-    pri: u32,
+    pub queue: String,
+    pub job: Value,
+    pub pri: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Get {
-    queues: Vec<String>,
-    wait: bool,
+    pub queues: Vec<String>,
+    pub wait: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Delete {
-    id: u32,
+    pub id: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Abort {
-    id: u32,
+    pub id: u32,
 }
 
 #[derive(Serialize, Debug)]
@@ -43,6 +44,12 @@ pub struct Response {
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    job: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pri: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queue: Option<String>,
 }
 
 impl Response {
@@ -51,6 +58,9 @@ impl Response {
             status: "ok".to_string(),
             error: None,
             id: None,
+            job: None,
+            pri: None,
+            queue: None,
         }
     }
 
@@ -59,6 +69,20 @@ impl Response {
             status: "ok".to_string(),
             error: None,
             id: Some(id),
+            job: None,
+            pri: None,
+            queue: None,
+        }
+    }
+
+    pub fn ok_and_job(job: Job) -> Self {
+        Self {
+            status: "ok".to_string(),
+            error: None,
+            id: Some(job.id),
+            job: Some(job.job),
+            pri: Some(job.prio),
+            queue: Some(job.queue),
         }
     }
 
@@ -67,6 +91,9 @@ impl Response {
             status: "no-job".to_string(),
             error: None,
             id: None,
+            job: None,
+            pri: None,
+            queue: None,
         }
     }
 
@@ -75,6 +102,9 @@ impl Response {
             status: "error".to_string(),
             error: Some(error.to_string()),
             id: None,
+            job: None,
+            pri: None,
+            queue: None,
         }
     }
 }
