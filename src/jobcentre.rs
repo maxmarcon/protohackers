@@ -52,19 +52,19 @@ impl Queue {
         self.heap.push(job)
     }
 
-    pub fn peek(&mut self, deleted: &HashMap<u32, JobState>) -> Option<Job> {
-        self.skip_deleted(deleted);
+    pub fn peek(&mut self, job_state: &HashMap<u32, JobState>) -> Option<Job> {
+        self.skip_deleted(job_state);
         self.heap.peek().cloned()
     }
 
-    pub fn pop(&mut self, deleted: &HashMap<u32, JobState>) -> Option<Job> {
-        self.skip_deleted(deleted);
+    pub fn pop(&mut self, job_state: &HashMap<u32, JobState>) -> Option<Job> {
+        self.skip_deleted(job_state);
         self.heap.pop()
     }
 
-    fn skip_deleted(&mut self, deleted: &HashMap<u32, JobState>) {
+    fn skip_deleted(&mut self, job_state: &HashMap<u32, JobState>) {
         while let Some(Job { id, .. }) = self.heap.peek() {
-            if deleted.get(id).cloned() == Some(JobState::Deleted) {
+            if job_state.get(id).cloned() == Some(JobState::Deleted) {
                 self.heap.pop();
             } else {
                 break;
@@ -88,11 +88,11 @@ mod tests {
         queue.push(Job::new(3, 200, "foo", json!("foo")));
         queue.push(Job::new(4, 300, "foo", json!("foo")));
 
-        let mut deleted = HashMap::new();
-        deleted.insert(3, JobState::Deleted);
-        deleted.insert(4, JobState::Deleted);
+        let mut job_status = HashMap::new();
+        job_status.insert(3, JobState::Deleted);
+        job_status.insert(4, JobState::Deleted);
 
-        assert!(queue.peek(&deleted).is_some_and(|j| j.id == 2));
+        assert!(queue.peek(&job_status).is_some_and(|j| j.id == 2));
     }
 
     #[test]
@@ -104,12 +104,12 @@ mod tests {
         queue.push(Job::new(3, 200, "foo", json!("foo")));
         queue.push(Job::new(4, 300, "foo", json!("foo")));
 
-        let mut deleted = HashMap::new();
-        deleted.insert(3, JobState::Deleted);
-        deleted.insert(4, JobState::Deleted);
+        let mut job_status = HashMap::new();
+        job_status.insert(3, JobState::Deleted);
+        job_status.insert(4, JobState::Deleted);
 
-        assert!(queue.pop(&deleted).is_some_and(|j| j.id == 2));
-        assert!(queue.pop(&deleted).is_some_and(|j| j.id == 1));
-        assert_eq!(queue.pop(&deleted), None);
+        assert!(queue.pop(&job_status).is_some_and(|j| j.id == 2));
+        assert!(queue.pop(&job_status).is_some_and(|j| j.id == 1));
+        assert_eq!(queue.pop(&job_status), None);
     }
 }
