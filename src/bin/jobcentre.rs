@@ -82,25 +82,29 @@ async fn handle_stream(
         &queues,
         &job_state,
         job_id,
-        sender,
+        &sender,
         receiver,
     )
     .await;
 
-    let working_on = {
+    let working_on: Vec<_> = {
         // inefficient
         let job_state = job_state.read().unwrap();
         job_state
             .iter()
-            .find(|(_, state)| matches!(state, JobState::Assigned(client_id, _) if *client_id == my_client_id))
-            .map(|(job_id, _)| *job_id)
+            .filter_map(|(job_id, state)| match state {
+                JobState::Assigned(client_id, _) if *client_id == my_client_id => Some(*job_id),
+                _ => None,
+            })
+            .collect()
     };
-    if let Some(job_id) = working_on {
+    for job_id in working_on {
         let _ = abort_job(
             my_client_id,
             job_id,
             &mut job_state.write().unwrap(),
             &mut queues.write().unwrap(),
+            &sender,
         );
     }
 
@@ -117,44 +121,15 @@ fn process_message(
 ) -> Option<Response> {
     match msg {
         msg::Msg::Put(put) => {
-            let mut queues = queues.write().unwrap();
-            let (response, client_id, was_waiting_in_queues) = {
-                let queue = queues.entry(put.queue.clone()).or_insert(Queue::default());
-
-                let mut job_id = job_id.lock().unwrap();
-                *job_id += 1;
-                let job = Job::new(*job_id, put.pri, &put.queue, put.job);
-                if queue.waiting_clients.is_empty() {
-                    job_state
-                        .write()
-                        .unwrap()
-                        .insert(job.id, JobState::Unassigned);
-                    queue.push(job);
-                    (Some(Response::ok_and_id(*job_id)), None, None)
-                } else {
-                    let client_id = *queue.waiting_clients.keys().next().unwrap();
-                    job_state
-                        .write()
-                        .unwrap()
-                        .insert(job.id, JobState::Assigned(client_id, job.clone()));
-                    sender.send((client_id, job)).unwrap();
-                    (
-                        None,
-                        Some(client_id),
-                        Some(queue.waiting_clients.remove(&client_id).unwrap()),
-                    )
-                }
-            };
-            if let Some(client_id) = client_id {
-                for queue_name in was_waiting_in_queues.unwrap() {
-                    queues
-                        .get_mut(&queue_name)
-                        .unwrap()
-                        .waiting_clients
-                        .remove(&client_id);
-                }
-            }
-            response
+            let mut job_id = job_id.lock().unwrap();
+            *job_id += 1;
+            let job = Job::new(*job_id, put.pri, &put.queue, put.job);
+            add_job_to_queue(
+                job,
+                &mut queues.write().unwrap(),
+                &mut job_state.write().unwrap(),
+                sender,
+            )
         }
         msg::Msg::Get(get) => {
             let mut queues = queues.write().unwrap();
@@ -196,7 +171,7 @@ fn process_message(
         msg::Msg::Abort(abort) => {
             let mut job_state = job_state.write().unwrap();
             let mut queues = queues.write().unwrap();
-            match abort_job(client_id, abort.id, &mut job_state, &mut queues) {
+            match abort_job(client_id, abort.id, &mut job_state, &mut queues, sender) {
                 Ok(false) => Some(Response::no_job()),
                 Ok(true) => Some(Response::ok()),
                 Err(error) => Some(Response::error(&error)),
@@ -205,15 +180,53 @@ fn process_message(
     }
 }
 
+fn add_job_to_queue(
+    job: Job,
+    queues: &mut HashMap<String, Queue>,
+    job_state: &mut HashMap<u32, JobState>,
+    sender: &Sender<(u32, Job)>,
+) -> Option<Response> {
+    let (response, client_id, was_waiting_in_queues) = {
+        let queue = queues.entry(job.queue.clone()).or_insert(Queue::default());
+
+        if queue.waiting_clients.is_empty() {
+            job_state.insert(job.id, JobState::Unassigned);
+            let job_id = job.id;
+            queue.push(job);
+            (Some(Response::ok_and_id(job_id)), None, None)
+        } else {
+            let client_id = *queue.waiting_clients.keys().next().unwrap();
+            job_state.insert(job.id, JobState::Assigned(client_id, job.clone()));
+            sender.send((client_id, job)).unwrap();
+            (
+                None,
+                Some(client_id),
+                Some(queue.waiting_clients.remove(&client_id).unwrap()),
+            )
+        }
+    };
+    if let Some(client_id) = client_id {
+        for queue_name in was_waiting_in_queues.unwrap() {
+            queues
+                .get_mut(&queue_name)
+                .unwrap()
+                .waiting_clients
+                .remove(&client_id);
+        }
+    }
+    response
+}
+
 fn abort_job(
     client_id: u32,
     job_id: u32,
     job_state: &mut HashMap<u32, JobState>,
     queues: &mut HashMap<String, Queue>,
+    sender: &Sender<(u32, Job)>,
 ) -> Result<bool, String> {
     let result = match job_state.get(&job_id) {
         Some(JobState::Assigned(worker_id, job)) if *worker_id == client_id => {
-            queues.get_mut(&job.queue).unwrap().push(job.clone());
+            add_job_to_queue(job.clone(), queues, job_state, sender);
             Ok(true)
         }
         Some(JobState::Assigned(_, _)) => Err(format!(
@@ -248,7 +261,7 @@ async fn message_loop(
     queues: &Arc<RwLock<HashMap<String, Queue>>>,
     job_state: &Arc<RwLock<HashMap<u32, JobState>>>,
     job_id: Arc<Mutex<u32>>,
-    sender: Sender<(u32, Job)>,
+    sender: &Sender<(u32, Job)>,
     mut receiver: Receiver<(u32, Job)>,
 ) -> io::Result<()> {
     let (tcpreader, mut tcpwriter) = tcpstream.split();
@@ -263,7 +276,7 @@ async fn message_loop(
                }
                match message.unwrap() {
                     Ok(msg) =>  {
-                        if let Some(response) = process_message(msg, client_id, &job_id, queues, job_state, &sender) {
+                        if let Some(response) = process_message(msg, client_id, &job_id, queues, job_state, sender) {
                             tcpwriter.write_all(response.to_string().as_bytes()).await?
                         }
                     },
