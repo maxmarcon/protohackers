@@ -126,17 +126,18 @@ fn main() {
         let readings = readings.clone();
         let dispatchers = dispatchers.clone();
         let sender = sender.clone();
+        let receiver = sender.subscribe();
         let dispacher_id = dispatcher_id.clone();
         let car_tickets = car_tickets.clone();
-        Box::pin(async move {
+        Box::pin(async {
             handle_connection(
                 tcpstream,
                 readings,
                 dispacher_id,
                 dispatchers,
                 car_tickets,
-                sender.clone(),
-                sender.subscribe(),
+                sender,
+                receiver,
             )
             .await
         })
