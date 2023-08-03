@@ -34,10 +34,10 @@ impl Job {
     }
 }
 
-#[derive(Clone, PartialEq, Copy)]
+#[derive(Clone, PartialEq)]
 pub enum JobState {
     Unassigned,
-    Assigned(u32),
+    Assigned(u32, Job),
     Deleted,
 }
 

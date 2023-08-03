@@ -14,15 +14,13 @@ use tokio::net::tcp::ReadHalf;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::{Receiver, Sender};
 
-type QueueMap = Arc<RwLock<HashMap<String, Queue>>>;
-
 fn main() {
     let args = CliArgs::parse();
 
     let client_id = Arc::new(Mutex::new(0));
     let job_id = Arc::new(Mutex::new(0));
 
-    let queues: QueueMap = Arc::new(RwLock::new(HashMap::new()));
+    let queues = Arc::new(RwLock::new(HashMap::new()));
     let job_state = Arc::new(RwLock::new(HashMap::new()));
 
     let (sender, _receiver) = tokio::sync::broadcast::channel(100);
@@ -65,7 +63,7 @@ fn message_stream(mut tcpreader: ReadHalf) -> impl Stream<Item = msg::Result<msg
 
 async fn handle_stream(
     tcpstream: TcpStream,
-    queues: QueueMap,
+    queues: Arc<RwLock<HashMap<String, Queue>>>,
     job_state: Arc<RwLock<HashMap<u32, JobState>>>,
     client_id: Arc<Mutex<u32>>,
     job_id: Arc<Mutex<u32>>,
@@ -81,7 +79,7 @@ async fn handle_stream(
     let result = message_loop(
         tcpstream,
         my_client_id,
-        queues,
+        &queues,
         &job_state,
         job_id,
         sender,
@@ -90,17 +88,20 @@ async fn handle_stream(
     .await;
 
     let working_on = {
+        // inefficient
         let job_state = job_state.read().unwrap();
         job_state
             .iter()
-            .find(|(_, &state)| state == JobState::Assigned(my_client_id))
+            .find(|(_, state)| matches!(state, JobState::Assigned(client_id, _) if *client_id == my_client_id))
             .map(|(job_id, _)| *job_id)
     };
     if let Some(job_id) = working_on {
-        job_state
-            .write()
-            .unwrap()
-            .insert(job_id, JobState::Unassigned);
+        let _ = abort_job(
+            my_client_id,
+            job_id,
+            &mut job_state.write().unwrap(),
+            &mut queues.write().unwrap(),
+        );
     }
 
     result
@@ -110,7 +111,7 @@ fn process_message(
     msg: msg::Msg,
     client_id: u32,
     job_id: &Arc<Mutex<u32>>,
-    queues: &QueueMap,
+    queues: &Arc<RwLock<HashMap<String, Queue>>>,
     job_state: &Arc<RwLock<HashMap<u32, JobState>>>,
     sender: &Sender<(u32, Job)>,
 ) -> Option<Response> {
@@ -135,7 +136,7 @@ fn process_message(
                     job_state
                         .write()
                         .unwrap()
-                        .insert(job.id, JobState::Assigned(client_id));
+                        .insert(job.id, JobState::Assigned(client_id, job.clone()));
                     sender.send((client_id, job)).unwrap();
                     (
                         None,
@@ -173,7 +174,7 @@ fn process_message(
                     .unwrap()
                     .pop(&job_state)
                     .unwrap();
-                job_state.insert(job.id, JobState::Assigned(client_id));
+                job_state.insert(job.id, JobState::Assigned(client_id, job.clone()));
                 Some(Response::ok_and_job(job))
             } else if get.wait {
                 put_client_in_wait(client_id, &get.queues, queues);
@@ -185,8 +186,7 @@ fn process_message(
         msg::Msg::Delete(delete) => {
             let mut job_state = job_state.write().unwrap();
             match job_state.get(&delete.id) {
-                None => Some(Response::no_job()),
-                Some(JobState::Deleted) => Some(Response::no_job()),
+                None | Some(JobState::Deleted) => Some(Response::no_job()),
                 _ => {
                     job_state.insert(delete.id, JobState::Deleted);
                     Some(Response::ok())
@@ -195,19 +195,37 @@ fn process_message(
         }
         msg::Msg::Abort(abort) => {
             let mut job_state = job_state.write().unwrap();
-            match job_state.get(&abort.id) {
-                Some(JobState::Assigned(worker_id)) if *worker_id == client_id => {
-                    job_state.insert(abort.id, JobState::Unassigned);
-                    Some(Response::ok())
-                }
-                Some(JobState::Assigned(_)) => Some(Response::error(&format!(
-                    "you are client {} and cannot abort job {} because not working on it",
-                    client_id, abort.id
-                ))),
-                _ => Some(Response::no_job()),
+            let mut queues = queues.write().unwrap();
+            match abort_job(client_id, abort.id, &mut job_state, &mut queues) {
+                Ok(false) => Some(Response::no_job()),
+                Ok(true) => Some(Response::ok()),
+                Err(error) => Some(Response::error(&error)),
             }
         }
     }
+}
+
+fn abort_job(
+    client_id: u32,
+    job_id: u32,
+    job_state: &mut HashMap<u32, JobState>,
+    queues: &mut HashMap<String, Queue>,
+) -> Result<bool, String> {
+    let result = match job_state.get(&job_id) {
+        Some(JobState::Assigned(worker_id, job)) if *worker_id == client_id => {
+            queues.get_mut(&job.queue).unwrap().push(job.clone());
+            Ok(true)
+        }
+        Some(JobState::Assigned(_, _)) => Err(format!(
+            "you are client {} and cannot abort job {} because not assigned to you",
+            client_id, job_id
+        )),
+        _ => Ok(false),
+    };
+    if result == Ok(true) {
+        job_state.insert(job_id, JobState::Unassigned);
+    }
+    result
 }
 
 fn put_client_in_wait(
@@ -227,7 +245,7 @@ fn put_client_in_wait(
 async fn message_loop(
     mut tcpstream: TcpStream,
     client_id: u32,
-    queues: QueueMap,
+    queues: &Arc<RwLock<HashMap<String, Queue>>>,
     job_state: &Arc<RwLock<HashMap<u32, JobState>>>,
     job_id: Arc<Mutex<u32>>,
     sender: Sender<(u32, Job)>,
@@ -245,7 +263,7 @@ async fn message_loop(
                }
                match message.unwrap() {
                     Ok(msg) =>  {
-                        if let Some(response) = process_message(msg, client_id, &job_id, &queues, job_state, &sender) {
+                        if let Some(response) = process_message(msg, client_id, &job_id, queues, job_state, &sender) {
                             tcpwriter.write_all(response.to_string().as_bytes()).await?
                         }
                     },
@@ -253,8 +271,8 @@ async fn message_loop(
                }
             }
             job = receiver.recv() => {
-                let (for_client_id, job) = job.unwrap();
-                if for_client_id == client_id {
+                let (to_client_id, job) = job.unwrap();
+                if to_client_id == client_id {
                     tcpwriter.write_all(msg::Response::ok_and_job(job).to_string().as_bytes()).await?
                 }
             }
