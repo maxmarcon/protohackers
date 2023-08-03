@@ -82,7 +82,7 @@ async fn handle_stream(
         *id
     };
 
-    let result = message_loop(
+    let result = processing_loop(
         tcpstream,
         my_client_id,
         &queues,
@@ -257,7 +257,7 @@ fn put_client_in_wait(client_id: u32, queue_names: &[String], queues: &mut HashM
     }
 }
 
-async fn message_loop(
+async fn processing_loop(
     mut tcpstream: TcpStream,
     client_id: u32,
     queues: &Arc<RwLock<HashMap<String, Queue>>>,
