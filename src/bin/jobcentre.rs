@@ -7,7 +7,7 @@ use protohackers::jobcentre::msg::Response;
 use protohackers::jobcentre::{Job, JobState, Queue};
 use protohackers::{CliArgs, Parser, Server};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::ReadHalf;
@@ -17,8 +17,8 @@ use tokio::sync::broadcast::{Receiver, Sender};
 fn main() {
     let args = CliArgs::parse();
 
-    let client_id = Arc::new(Mutex::new(0));
-    let job_id = Arc::new(Mutex::new(0));
+    let last_client_id = Arc::new(Mutex::new(0));
+    let last_job_id = Arc::new(Mutex::new(0));
 
     let queues = Arc::new(RwLock::new(HashMap::new()));
     let job_state = Arc::new(RwLock::new(HashMap::new()));
@@ -28,13 +28,19 @@ fn main() {
     let handler = Arc::new(move |tcpstream| -> BoxFuture<'static, io::Result<()>> {
         let queues = queues.clone();
         let job_state = job_state.clone();
-        let client_id = client_id.clone();
-        let job_id = job_id.clone();
+        let last_client_id = last_client_id.clone();
+        let last_job_id = last_job_id.clone();
         let sender = sender.clone();
         let receiver = sender.subscribe();
         Box::pin(async {
             handle_stream(
-                tcpstream, queues, job_state, client_id, job_id, sender, receiver,
+                tcpstream,
+                queues,
+                job_state,
+                last_client_id,
+                last_job_id,
+                sender,
+                receiver,
             )
             .await
         })
@@ -65,13 +71,13 @@ async fn handle_stream(
     tcpstream: TcpStream,
     queues: Arc<RwLock<HashMap<String, Queue>>>,
     job_state: Arc<RwLock<HashMap<u32, JobState>>>,
-    client_id: Arc<Mutex<u32>>,
-    job_id: Arc<Mutex<u32>>,
+    last_client_id: Arc<Mutex<u32>>,
+    last_job_id: Arc<Mutex<u32>>,
     sender: Sender<(u32, Job)>,
     receiver: Receiver<(u32, Job)>,
 ) -> io::Result<()> {
     let my_client_id = {
-        let mut id = client_id.lock().unwrap();
+        let mut id = last_client_id.lock().unwrap();
         *id += 1;
         *id
     };
@@ -81,7 +87,7 @@ async fn handle_stream(
         my_client_id,
         &queues,
         &job_state,
-        job_id,
+        last_job_id,
         &sender,
         receiver,
     )
@@ -114,14 +120,14 @@ async fn handle_stream(
 fn process_message(
     msg: msg::Msg,
     client_id: u32,
-    job_id: &Arc<Mutex<u32>>,
+    last_job_id: &Arc<Mutex<u32>>,
     queues: &Arc<RwLock<HashMap<String, Queue>>>,
     job_state: &Arc<RwLock<HashMap<u32, JobState>>>,
     sender: &Sender<(u32, Job)>,
 ) -> Option<Response> {
     match msg {
         msg::Msg::Put(put) => {
-            let mut job_id = job_id.lock().unwrap();
+            let mut job_id = last_job_id.lock().unwrap();
             *job_id += 1;
             let job = Job::new(*job_id, put.pri, &put.queue, put.job);
             add_job_to_queue(
@@ -152,7 +158,7 @@ fn process_message(
                 job_state.insert(job.id, JobState::Assigned(client_id, job.clone()));
                 Some(Response::ok_and_job(job))
             } else if get.wait {
-                put_client_in_wait(client_id, &get.queues, queues);
+                put_client_in_wait(client_id, &get.queues, &mut queues);
                 None
             } else {
                 Some(Response::no_job())
@@ -241,11 +247,7 @@ fn abort_job(
     result
 }
 
-fn put_client_in_wait(
-    client_id: u32,
-    queue_names: &[String],
-    mut queues: RwLockWriteGuard<HashMap<String, Queue>>,
-) {
+fn put_client_in_wait(client_id: u32, queue_names: &[String], queues: &mut HashMap<String, Queue>) {
     for queue_name in queue_names {
         queues
             .get_mut(queue_name)
@@ -260,7 +262,7 @@ async fn message_loop(
     client_id: u32,
     queues: &Arc<RwLock<HashMap<String, Queue>>>,
     job_state: &Arc<RwLock<HashMap<u32, JobState>>>,
-    job_id: Arc<Mutex<u32>>,
+    last_job_id: Arc<Mutex<u32>>,
     sender: &Sender<(u32, Job)>,
     mut receiver: Receiver<(u32, Job)>,
 ) -> io::Result<()> {
@@ -276,7 +278,7 @@ async fn message_loop(
                }
                match message.unwrap() {
                     Ok(msg) =>  {
-                        if let Some(response) = process_message(msg, client_id, &job_id, queues, job_state, sender) {
+                        if let Some(response) = process_message(msg, client_id, &last_job_id, queues, job_state, sender) {
                             tcpwriter.write_all(response.to_string().as_bytes()).await?
                         }
                     },
