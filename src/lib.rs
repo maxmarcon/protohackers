@@ -4,6 +4,7 @@ pub mod isl;
 pub mod jobcentre;
 pub mod lrcp;
 pub mod speed;
+pub mod vcs;
 
 pub use clap::Parser;
 use std::collections::HashMap;
