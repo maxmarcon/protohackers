@@ -4,6 +4,7 @@ use std::fs::DirBuilder;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::path::{Component, Path};
+use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 pub mod command;
@@ -38,7 +39,7 @@ impl File {
         {
             Ok(false)
         } else {
-            let mut file = tokio::fs::OpenOptions::new()
+            let mut file = fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .open(Path::join(WORKING_DIR.as_ref(), &hash))
@@ -50,9 +51,9 @@ impl File {
         }
     }
 
-    pub async fn open(&self, rev: Option<u32>) -> io::Result<tokio::fs::File> {
+    pub async fn open(&self, rev: Option<u32>) -> io::Result<fs::File> {
         let hash = &self.revision_map[rev.as_ref().unwrap_or(&self.current_revision)];
-        tokio::fs::File::open(Path::join(WORKING_DIR.as_ref(), hash)).await
+        fs::File::open(Path::join(WORKING_DIR.as_ref(), hash)).await
     }
 }
 
