@@ -105,13 +105,13 @@ async fn handle_stream(
             .collect()
     };
     for job_id in working_on {
-        let _ = abort_job(
+        abort_job(
             my_client_id,
             job_id,
             &mut job_state.write().unwrap(),
             &mut queues.write().unwrap(),
             &sender,
-        );
+        ).unwrap();
     }
 
     result
