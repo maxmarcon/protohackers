@@ -9,7 +9,8 @@ use protohackers::{CliArgs, Parser, Server};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::io;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::tcp::ReadHalf;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::{Receiver, Sender};
@@ -51,18 +52,17 @@ fn main() {
         .unwrap();
 }
 
-fn message_stream(mut tcpreader: ReadHalf) -> impl Stream<Item = msg::Result<msg::Msg>> + '_ {
+fn message_stream(tcpreader: ReadHalf) -> impl Stream<Item = msg::Result<msg::Msg>> + '_ {
     let mut buf: Vec<u8> = Vec::new();
+    let mut reader = BufReader::new(tcpreader);
     try_stream! {
         loop {
-            while let Some(eom) = buf.iter().enumerate().find(|(_, b)| **b == b'\n').map(|(idx, _)| idx) {
-                yield msg::parse(&String::from_utf8(buf.drain(..eom).collect())?)?;
-                buf.drain(..1);
-            }
-            let read = tcpreader.read_buf(&mut buf).await?;
+            let read = reader.read_until(b'\n', &mut buf).await?;
             if read == 0 {
                 break;
             }
+            yield msg::parse(&String::from_utf8(buf.drain(..read-1).collect())?)?;
+            buf.drain(..1);
         }
     }
 }
@@ -111,7 +111,8 @@ async fn handle_stream(
             &mut job_state.write().unwrap(),
             &mut queues.write().unwrap(),
             &sender,
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     result
