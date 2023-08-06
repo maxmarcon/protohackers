@@ -1,6 +1,10 @@
 use regex::Regex;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Formatter, write};
+use std::io;
+use std::path::PathBuf;
 use std::str::FromStr;
+use std::string::FromUtf8Error;
+use md5::Digest;
 
 pub enum Command {
     Get(Get),
@@ -77,6 +81,8 @@ pub enum Error {
     IllegalFileName,
     IllegalDirName,
     Usage(String),
+    FromUtf8Error(FromUtf8Error),
+    IoError(io::Error)
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -88,19 +94,34 @@ impl Display for Error {
             Error::Usage(usage) => write!(f, "ERR usage: {}", usage),
             Error::IllegalDirName => write!(f, "ERR illegal dir name"),
             Error::IllegalFileName => write!(f, "ERR illegal file name"),
+            Error::FromUtf8Error(error) => write!(f, "ERR {}", error),
+            Error::IoError(error) => write!(f, "ERR {}", error)
         }
     }
 }
 
-pub fn parse(buf: &str) -> Result<Command> {
-    let mut words: Vec<_> = buf.split_ascii_whitespace().rev().collect();
+impl From<FromUtf8Error> for Error {
+    fn from(value: FromUtf8Error) -> Self {
+        Error::FromUtf8Error(value)
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Error::IoError(value)
+    }
+}
+
+pub fn parse(buf: &[u8]) -> Result<Command> {
+    let decoded_buf = String::from_utf8(buf.to_vec())?;
+    let mut words: Vec<_> = decoded_buf.split_ascii_whitespace().collect();
     if words.is_empty() {
         return Err(Error::IllegalMethod("".to_string()));
     }
-    match words.pop().unwrap() {
-        "GET" => Ok(Command::Get(Get::parse(&words[..])?)),
-        "PUT" => Ok(Command::Put(Put::parse(&words[..])?)),
-        "LIST" => Ok(Command::List(List::parse(&words[..])?)),
+    match words[0] {
+        "GET" => Ok(Command::Get(Get::parse(&words[1..])?)),
+        "PUT" => Ok(Command::Put(Put::parse(&words[1..])?)),
+        "LIST" => Ok(Command::List(List::parse(&words[1..])?)),
         "HELP" => Ok(Command::Help),
         illegal_method => Err(Error::IllegalMethod(illegal_method.to_string())),
     }

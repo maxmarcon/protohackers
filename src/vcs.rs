@@ -1,3 +1,4 @@
+use md5::Digest;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::DirBuilder;
@@ -12,12 +13,13 @@ pub mod command;
 static WORKING_DIR: &str = "vcs";
 
 pub fn create_working_dir() -> io::Result<()> {
-    DirBuilder::new().create(WORKING_DIR)
+    DirBuilder::new().recursive(true).create(WORKING_DIR)
 }
 
+#[derive(Clone)]
 pub struct File {
     name: String,
-    revision_map: HashMap<u32, String>,
+    revision_map: HashMap<u32, Digest>,
     current_revision: u32,
 }
 
@@ -30,34 +32,30 @@ impl File {
         }
     }
 
-    pub async fn add_revision(&mut self, data: &[u8]) -> io::Result<bool> {
-        let hash = format!("{:x}", md5::compute(data));
+    pub  fn add_revision(&mut self, hash: Digest) -> bool {
         if self
             .revision_map
             .get(&self.current_revision)
             .is_some_and(|revision_hash| *revision_hash == hash)
-        {
-            Ok(false)
+        { 
+            false
         } else {
-            let mut file = fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .open(Path::join(WORKING_DIR.as_ref(), &hash))
-                .await?;
-            file.write_all(data).await?;
             self.current_revision += 1;
             self.revision_map.insert(self.current_revision, hash);
-            Ok(true)
+            true
         }
     }
 
     pub async fn open(&self, rev: Option<u32>) -> io::Result<fs::File> {
-        let hash = &self.revision_map[rev.as_ref().unwrap_or(&self.current_revision)];
+        let hash = format!(
+            "{:x}",
+            self.revision_map[rev.as_ref().unwrap_or(&self.current_revision)]
+        );
         fs::File::open(Path::join(WORKING_DIR.as_ref(), hash)).await
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Dir {
     files: HashMap<String, File>,
     dirs: HashMap<String, Dir>,
@@ -103,7 +101,7 @@ impl Dir {
         None
     }
 
-    pub async fn add_revision(&mut self, path: &str, data: &[u8]) -> io::Result<u32> {
+    pub  fn add_revision(&mut self, path: &str, hash: Digest) -> io::Result<(u32, bool)> {
         let mut cur_dir = self;
         let components: Vec<_> = Path::new(path).components().collect();
         let components_length = components.len();
@@ -115,8 +113,8 @@ impl Dir {
                         .files
                         .entry(component.clone())
                         .or_insert(File::new(&component));
-                    file.add_revision(data).await?;
-                    return Ok(file.current_revision);
+                    let new_revision = file.add_revision(hash);
+                    return Ok((file.current_revision, new_revision));
                 }
                 Component::Normal(component) => {
                     cur_dir = cur_dir
