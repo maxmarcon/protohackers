@@ -131,21 +131,20 @@ impl Dir {
 
 impl Display for Dir {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let total = self
+        let mut dirs: Vec<_> = self
             .dirs
             .keys()
             .filter(|dir| !self.files.contains_key(*dir))
-            .count();
-        writeln!(f, "OK {}", total)?;
-        for dir in self
-            .dirs
-            .keys()
-            .filter(|dir| !self.files.contains_key(*dir))
-        {
+            .collect();
+        dirs.sort();
+        let mut files: Vec<_> = self.files.keys().collect();
+        writeln!(f, "OK {}", dirs.len() + files.len())?;
+        files.sort();
+        for dir in dirs {
             writeln!(f, "{}/ DIR", dir)?;
         }
-        for (file_name, file) in self.files.iter() {
-            writeln!(f, "{} r{}", file_name, file.current_revision)?;
+        for file in files {
+            writeln!(f, "{} r{}", file, self.files[file].current_revision)?;
         }
         Ok(())
     }

@@ -120,7 +120,7 @@ pub fn parse(buf: &[u8]) -> Result<Command> {
     if words.is_empty() {
         return Err(Error::IllegalMethod("".to_string()));
     }
-    match words[0] {
+    match words[0].to_uppercase().as_ref() {
         "GET" => Ok(Command::Get(Get::parse(&words[1..])?)),
         "PUT" => Ok(Command::Put(Put::parse(&words[1..])?)),
         "LIST" => Ok(Command::List(List::parse(&words[1..])?)),

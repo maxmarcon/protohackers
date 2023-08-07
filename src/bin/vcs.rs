@@ -87,23 +87,28 @@ async fn handle_stream(
             Ok(Command::Put(command::Put { length, .. })) if length > MAX_FILE_SIZE => {
                 tcpwriter.write_all(b"ERR file too long\n").await?;
             }
-            Ok(Command::Put(put)) => {
-                let (temp_file_path, digest) = save_file(&mut reader, put.length).await?;
-                let (current_revision, new_revision) = root_dir
-                    .write()
-                    .unwrap()
-                    .add_revision(&put.filename, digest)?;
-                if new_revision {
-                    let dest_file_path =
-                        PathBuf::from(vcs::WORKING_DIR).join(format!("{:x}", digest));
-                    fs::rename(temp_file_path, dest_file_path).await?;
-                } else {
-                    fs::remove_file(temp_file_path).await?;
+            Ok(Command::Put(put)) => match save_file(&mut reader, put.length).await {
+                Ok((temp_file_path, digest)) => {
+                    let (current_revision, new_revision) = root_dir
+                        .write()
+                        .unwrap()
+                        .add_revision(&put.filename, digest)?;
+                    if new_revision {
+                        let dest_file_path =
+                            PathBuf::from(vcs::WORKING_DIR).join(format!("{:x}", digest));
+                        fs::rename(temp_file_path, dest_file_path).await?;
+                    } else {
+                        fs::remove_file(temp_file_path).await?;
+                    }
+                    tcpwriter
+                        .write_all(format!("OK r{}\n", current_revision).as_bytes())
+                        .await?
                 }
-                tcpwriter
-                    .write_all(format!("OK r{}\n", current_revision).as_bytes())
-                    .await?
-            }
+                Err(err) if err.kind() == ErrorKind::InvalidData => {
+                    tcpwriter.write_all(b"ERR invalid data\n").await?
+                }
+                Err(err) => return Err(err),
+            },
             Err(error) => {
                 tcpwriter
                     .write_all(format!("{}\n", error).as_bytes())
@@ -133,6 +138,9 @@ async fn save_file(
         let read = reader.read_exact(&mut buf[..to_read]).await?;
         if read == 0 {
             return Err(io::Error::from(ErrorKind::UnexpectedEof));
+        }
+        if buf[..read].iter().any(|b| !b.is_ascii()) {
+            return Err(io::Error::from(ErrorKind::InvalidData));
         }
         context.consume(&buf[..read]);
         temp_file.write_all(&buf[..read]).await?;
