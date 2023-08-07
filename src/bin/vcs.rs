@@ -139,7 +139,7 @@ async fn save_file(
         if read == 0 {
             return Err(io::Error::from(ErrorKind::UnexpectedEof));
         }
-        if buf[..read].iter().any(|b| !b.is_ascii()) {
+        if String::from_utf8(buf[..read].to_vec()).is_err() {
             return Err(io::Error::from(ErrorKind::InvalidData));
         }
         context.consume(&buf[..read]);
