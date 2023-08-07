@@ -25,7 +25,7 @@ impl Get {
         let revnum = words
             .get(1)
             .map(|w| w.trim_start_matches('r'))
-            .and_then(|w| u32::from_str(w).ok());
+            .map(|w| u32::from_str(w).unwrap_or(0));
         if valid_file(filename) {
             Ok(Self {
                 filename: filename.to_string(),

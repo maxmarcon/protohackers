@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::fs::DirBuilder;
 use std::io;
 use std::io::{Error, ErrorKind};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 pub mod command;
 
@@ -12,6 +12,14 @@ pub static WORKING_DIR: &str = "vcs";
 
 pub fn create_working_dir() -> io::Result<()> {
     DirBuilder::new().recursive(true).create(WORKING_DIR)
+}
+
+pub struct NoSuchRevisionError {}
+
+impl Display for NoSuchRevisionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ERR no such revision")
+    }
 }
 
 #[derive(Clone, Default)]
@@ -35,11 +43,15 @@ impl File {
         }
     }
 
-    pub fn file_path(&self, rev: Option<u32>) -> String {
-        format!(
+    pub fn path(&self, rev: Option<u32>) -> Result<PathBuf, NoSuchRevisionError> {
+        if rev.is_some_and(|rev| !self.revision_map.contains_key(&rev)) {
+            return Err(NoSuchRevisionError {});
+        }
+
+        Ok(PathBuf::from(WORKING_DIR).join(format!(
             "{:x}",
             self.revision_map[rev.as_ref().unwrap_or(&self.current_revision)]
-        )
+        )))
     }
 }
 
@@ -72,7 +84,7 @@ impl Dir {
         for (pos, component) in components.into_iter().enumerate() {
             match component {
                 Component::Normal(component) if pos == components_len - 1 => {
-                    return cur_dir.files.get(&component.to_str().unwrap().to_string())
+                    return cur_dir.files.get(&component.to_str().unwrap().to_string());
                 }
                 Component::Normal(component) => {
                     if let Some(next_dir) =
@@ -133,7 +145,7 @@ impl Display for Dir {
             writeln!(f, "{}/ DIR", dir)?;
         }
         for (file_name, file) in self.files.iter() {
-            write!(f, "{} r{}", file_name, file.current_revision)?;
+            writeln!(f, "{} r{}", file_name, file.current_revision)?;
         }
         Ok(())
     }

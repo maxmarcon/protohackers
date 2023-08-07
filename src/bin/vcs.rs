@@ -58,7 +58,7 @@ async fn handle_stream(
             }
             Ok(Command::List(list)) => {
                 let response = match root_dir.read().unwrap().find_dir(&list.dir) {
-                    Some(dir) => format!("{}\n", dir),
+                    Some(dir) => format!("{}", dir),
                     None => "OK 0\n".to_owned(),
                 };
                 tcpwriter.write_all(response.as_bytes()).await?;
@@ -68,20 +68,20 @@ async fn handle_stream(
                     .read()
                     .unwrap()
                     .find_file(&get.filename)
-                    .map(|file| file.file_path(get.revision));
+                    .map(|file| file.path(get.revision));
                 let (response, file) = match file_path {
-                    Some(path) => {
-                        let file = fs::File::open(path).await?;
-                        (
-                            format!("OK {}\n", file.metadata().await.unwrap().len()),
-                            Some(file),
-                        )
+                    Some(Ok(path)) => {
+                        let file = fs::File::open(&path)
+                            .await
+                            .unwrap_or_else(|_| panic!("could not open file {:?}", path));
+                        (format!("OK {}\n", file.metadata().await?.len()), Some(file))
                     }
+                    Some(Err(error)) => (format!("{}\n", error), None),
                     None => ("ERR no such file\n".to_string(), None),
                 };
                 tcpwriter.write_all(response.as_bytes()).await?;
                 if let Some(file) = file {
-                    send_file(&mut tcpwriter, file).await?
+                    send_file(&mut tcpwriter, file).await.unwrap()
                 }
             }
             Ok(Command::Put(command::Put { length, .. })) if length > MAX_FILE_SIZE => {
