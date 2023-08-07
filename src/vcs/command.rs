@@ -1,10 +1,8 @@
 use regex::Regex;
-use std::fmt::{Display, Formatter, write};
+use std::fmt::{Display, Formatter};
 use std::io;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::string::FromUtf8Error;
-use md5::Digest;
 
 pub enum Command {
     Get(Get),
@@ -24,10 +22,14 @@ impl Get {
             return Err(Error::Usage("GET file [revision]".to_string()));
         }
         let filename = words[0];
-        if valid_path(filename) {
+        let revnum = words
+            .get(1)
+            .map(|w| w.trim_start_matches('r'))
+            .and_then(|w| u32::from_str(w).ok());
+        if valid_file(filename) {
             Ok(Self {
                 filename: filename.to_string(),
-                revision: words.get(1).and_then(|rev| u32::from_str(rev).ok()),
+                revision: revnum,
             })
         } else {
             Err(Error::IllegalFileName)
@@ -46,7 +48,7 @@ impl Put {
             return Err(Error::Usage("PUT file length newline data".to_string()));
         }
         let filename = words[0];
-        if valid_path(filename) {
+        if valid_file(filename) {
             Ok(Self {
                 filename: filename.to_string(),
                 length: usize::from_str(words[1]).unwrap_or(0),
@@ -82,7 +84,7 @@ pub enum Error {
     IllegalDirName,
     Usage(String),
     FromUtf8Error(FromUtf8Error),
-    IoError(io::Error)
+    IoError(io::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -95,7 +97,7 @@ impl Display for Error {
             Error::IllegalDirName => write!(f, "ERR illegal dir name"),
             Error::IllegalFileName => write!(f, "ERR illegal file name"),
             Error::FromUtf8Error(error) => write!(f, "ERR {}", error),
-            Error::IoError(error) => write!(f, "ERR {}", error)
+            Error::IoError(error) => write!(f, "ERR {}", error),
         }
     }
 }
@@ -114,7 +116,7 @@ impl From<io::Error> for Error {
 
 pub fn parse(buf: &[u8]) -> Result<Command> {
     let decoded_buf = String::from_utf8(buf.to_vec())?;
-    let mut words: Vec<_> = decoded_buf.split_ascii_whitespace().collect();
+    let words: Vec<_> = decoded_buf.split_ascii_whitespace().collect();
     if words.is_empty() {
         return Err(Error::IllegalMethod("".to_string()));
     }
@@ -134,6 +136,10 @@ fn valid_path(path: &str) -> bool {
             .chars()
             .all(|p| p.is_ascii_alphanumeric() || "/_-.".contains(p))
         && !re.is_match(path)
+}
+
+fn valid_file(path: &str) -> bool {
+    valid_path(path) && !path.ends_with('/')
 }
 
 #[cfg(test)]

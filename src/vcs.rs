@@ -5,39 +5,28 @@ use std::fs::DirBuilder;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::path::{Component, Path};
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
 
 pub mod command;
 
-static WORKING_DIR: &str = "vcs";
+pub static WORKING_DIR: &str = "vcs";
 
 pub fn create_working_dir() -> io::Result<()> {
     DirBuilder::new().recursive(true).create(WORKING_DIR)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct File {
-    name: String,
     revision_map: HashMap<u32, Digest>,
     current_revision: u32,
 }
 
 impl File {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            revision_map: HashMap::new(),
-            current_revision: 0,
-        }
-    }
-
-    pub  fn add_revision(&mut self, hash: Digest) -> bool {
+    pub fn add_revision(&mut self, hash: Digest) -> bool {
         if self
             .revision_map
             .get(&self.current_revision)
             .is_some_and(|revision_hash| *revision_hash == hash)
-        { 
+        {
             false
         } else {
             self.current_revision += 1;
@@ -46,12 +35,11 @@ impl File {
         }
     }
 
-    pub async fn open(&self, rev: Option<u32>) -> io::Result<fs::File> {
-        let hash = format!(
+    pub fn file_path(&self, rev: Option<u32>) -> String {
+        format!(
             "{:x}",
             self.revision_map[rev.as_ref().unwrap_or(&self.current_revision)]
-        );
-        fs::File::open(Path::join(WORKING_DIR.as_ref(), hash)).await
+        )
     }
 }
 
@@ -101,7 +89,7 @@ impl Dir {
         None
     }
 
-    pub  fn add_revision(&mut self, path: &str, hash: Digest) -> io::Result<(u32, bool)> {
+    pub fn add_revision(&mut self, path: &str, hash: Digest) -> io::Result<(u32, bool)> {
         let mut cur_dir = self;
         let components: Vec<_> = Path::new(path).components().collect();
         let components_length = components.len();
@@ -112,7 +100,7 @@ impl Dir {
                     let file = cur_dir
                         .files
                         .entry(component.clone())
-                        .or_insert(File::new(&component));
+                        .or_insert(File::default());
                     let new_revision = file.add_revision(hash);
                     return Ok((file.current_revision, new_revision));
                 }
@@ -145,7 +133,7 @@ impl Display for Dir {
             writeln!(f, "{}/ DIR", dir)?;
         }
         for (file_name, file) in self.files.iter() {
-            writeln!(f, "{} r{}", file_name, file.current_revision)?;
+            write!(f, "{} r{}", file_name, file.current_revision)?;
         }
         Ok(())
     }
