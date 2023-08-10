@@ -1,39 +1,15 @@
-use std::string::FromUtf8Error;
-use std::usize;
+use crate::pest;
+use crate::pest::{
+    decode_str, decode_target_populations, decode_u32, encode_str, encode_target_populations,
+};
 
 #[derive(PartialEq, Debug)]
 pub enum Msg {
     Hello(Hello),
-}
-
-#[derive(PartialEq, Debug)]
-pub enum Error {
-    InvalidMessage,
-    InvalidChecksum,
-    InvalidLength,
-    InvalidProtocol,
-    FromUtf8Error(FromUtf8Error),
-}
-
-impl From<FromUtf8Error> for Error {
-    fn from(value: FromUtf8Error) -> Self {
-        Error::FromUtf8Error(value)
-    }
-}
-
-type Result<T> = std::result::Result<T, Error>;
-
-#[derive(PartialEq, Debug)]
-pub struct Population {
-    species: String,
-    count: u32,
-}
-
-#[derive(PartialEq, Debug)]
-pub struct TargetPopulation {
-    species: String,
-    min: u32,
-    max: u32,
+    Ok,
+    Error(ErrorMsg),
+    DialAuth(DialAuth),
+    TargetPopulations(TargetPopulations),
 }
 
 #[derive(PartialEq, Debug)]
@@ -52,10 +28,10 @@ impl Default for Hello {
 }
 
 impl Hello {
-    fn decode(buf: &[u8]) -> Result<Hello> {
+    fn decode(buf: &[u8]) -> pest::Result<Self> {
         let protocol = decode_str(buf)?;
         let version = decode_u32(&buf[15..])?;
-        Ok(Hello { protocol, version })
+        Ok(Self { protocol, version })
     }
 
     fn encode(&self) -> Vec<u8> {
@@ -65,31 +41,93 @@ impl Hello {
     }
 }
 
-pub fn decode(buf: &[u8]) -> Result<Msg> {
-    if !valid_checksum(buf) {
-        return Err(Error::InvalidChecksum);
+#[derive(PartialEq, Debug)]
+pub struct ErrorMsg {
+    message: String,
+}
+
+impl ErrorMsg {
+    fn decode(buf: &[u8]) -> pest::Result<Self> {
+        let message = decode_str(buf)?;
+        Ok(Self { message })
     }
 
-    match buf[0] {
+    fn encode(&self) -> Vec<u8> {
+        encode_str(&self.message)
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct DialAuth {
+    site: u32,
+}
+
+impl DialAuth {
+    fn decode(buf: &[u8]) -> pest::Result<Self> {
+        let site = decode_u32(buf)?;
+        Ok(Self { site })
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        Vec::from(self.site.to_be_bytes())
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct TargetPopulations {
+    site: u32,
+    populations: Vec<pest::TargetPopulation>,
+}
+
+impl TargetPopulations {
+    fn decode(buf: &[u8]) -> pest::Result<Self> {
+        let site = decode_u32(buf)?;
+        let populations = decode_target_populations(&buf[4..])?;
+        Ok(Self { site, populations })
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::from(self.site.to_be_bytes());
+        buf.extend_from_slice(&encode_target_populations(&self.populations));
+        buf
+    }
+}
+
+pub fn decode(buf: &[u8]) -> pest::Result<Msg> {
+    if !valid_checksum(buf) {
+        return Err(pest::Error::InvalidChecksum);
+    }
+
+    let code = buf[0];
+    let body = &buf[5..];
+    match code {
         0x50 => {
-            let hello = Hello::decode(&buf[5..])?;
+            let hello = Hello::decode(body)?;
             if hello.protocol != "pestcontrol" || hello.version != 1 {
-                return Err(Error::InvalidProtocol);
+                return Err(pest::Error::InvalidProtocol);
             }
             Ok(Msg::Hello(hello))
         }
-        _ => Err(Error::InvalidMessage),
+        0x51 => Ok(Msg::Error(ErrorMsg::decode(body)?)),
+        0x52 => Ok(Msg::Ok),
+        0x53 => Ok(Msg::DialAuth(DialAuth::decode(body)?)),
+        0x54 => Ok(Msg::TargetPopulations(TargetPopulations::decode(body)?)),
+        _ => Err(pest::Error::InvalidMessage),
     }
 }
 
 pub fn encode(msg: &Msg) -> Vec<u8> {
-    let (code, mut message_body) = match msg {
+    let (code, message_body) = match msg {
         Msg::Hello(hello) => (0x50, hello.encode()),
+        Msg::Error(error_msg) => (0x51, error_msg.encode()),
+        Msg::Ok => (0x52, Vec::new()),
+        Msg::DialAuth(dial_auth) => (0x53, dial_auth.encode()),
+        Msg::TargetPopulations(target_populations) => (0x54, target_populations.encode()),
     };
 
     let mut buf = Vec::from([code]);
     buf.extend_from_slice(&(message_body.len() as u32).to_be_bytes());
-    buf.append(&mut message_body);
+    buf.extend_from_slice(&message_body);
     buf.push(compute_checksum(&buf));
     buf
 }
@@ -103,132 +141,61 @@ fn compute_checksum(buf: &[u8]) -> u8 {
     0_u8.wrapping_sub(sum)
 }
 
-pub fn decode_u32(buf: &[u8]) -> Result<u32> {
-    if buf.len() < 4 {
-        Err(Error::InvalidLength)
-    } else {
-        Ok(u32::from_be_bytes(buf[..4].try_into().unwrap()))
-    }
-}
-
-pub fn encode_str(str: &str) -> Vec<u8> {
-    let mut v = Vec::from((str.len() as u32).to_be_bytes());
-    v.extend_from_slice(str.as_bytes());
-    v
-}
-
-pub fn decode_str(buf: &[u8]) -> Result<String> {
-    let strlen = decode_u32(buf)? as usize;
-    if buf.len() < strlen + 4 {
-        return Err(Error::InvalidLength);
-    }
-    Ok(String::from_utf8(buf[4..strlen + 4].to_vec())?)
-}
-
-pub fn decode_populations(buf: &[u8]) -> Result<Vec<Population>> {
-    if buf.len() < 4 {
-        return Err(Error::InvalidLength);
-    }
-    let len = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
-    let mut populations = Vec::new();
-    let mut cur = 4;
-    for _ in 0..len {
-        let species = decode_str(&buf[cur..])?;
-        cur += 4 + species.len();
-        let count = decode_u32(&buf[cur..])?;
-        cur += 4;
-        populations.push(Population { species, count });
-    }
-    Ok(populations)
-}
-
-pub fn decode_target_populations(buf: &[u8]) -> Result<Vec<TargetPopulation>> {
-    if buf.len() < 4 {
-        return Err(Error::InvalidLength);
-    }
-    let len = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
-    let mut target_populations = Vec::new();
-    let mut cur = 4;
-    for _ in 0..len {
-        let species = decode_str(&buf[cur..])?;
-        cur += 4 + species.len();
-        let min = decode_u32(&buf[cur..])?;
-        cur += 4;
-        let max = decode_u32(&buf[cur..])?;
-        cur += 4;
-        target_populations.push(TargetPopulation { species, min, max });
-    }
-    Ok(target_populations)
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::pest::msg::encode_str;
-    use crate::pest::msg::TargetPopulation;
-    use crate::pest::msg::{decode, decode_target_populations, encode, Hello, Msg};
-    use crate::pest::msg::{decode_populations, decode_str, Population};
-
-    #[test]
-    fn test_encode_decode_str() {
-        let str = "hello my valentine!";
-        let encoded = encode_str(str);
-
-        assert_eq!(decode_str(&encoded), Ok(str.to_string()))
-    }
-
-    #[test]
-    fn test_decode_target_populations() {
-        let bytes = [
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x64, 0x6f, 0x67, 0x00, 0x00, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x03, 0x72, 0x61, 0x74, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x0a,
-        ];
-        let decoded = decode_target_populations(&bytes);
-
-        assert_eq!(
-            decoded,
-            Ok(vec![
-                TargetPopulation {
-                    species: "dog".to_string(),
-                    min: 1,
-                    max: 3
-                },
-                TargetPopulation {
-                    species: "rat".to_string(),
-                    min: 0,
-                    max: 10
-                }
-            ])
-        );
-    }
-
-    #[test]
-    fn test_decode_populations() {
-        let bytes = [
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x64, 0x6f, 0x67, 0x00, 0x00, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x03, 0x72, 0x61, 0x74, 0x00, 0x00, 0x00, 0x05,
-        ];
-
-        let decoded = decode_populations(&bytes);
-
-        assert_eq!(
-            decoded,
-            Ok(vec![
-                Population {
-                    species: "dog".to_string(),
-                    count: 1,
-                },
-                Population {
-                    species: "rat".to_string(),
-                    count: 5
-                }
-            ])
-        );
-    }
+    use crate::pest::msg::{decode, encode, Hello, Msg};
+    use crate::pest::msg::{DialAuth, ErrorMsg, TargetPopulations};
+    use crate::pest::TargetPopulation;
 
     #[test]
     fn encode_decode_hello() {
         let msg = Msg::Hello(Hello::default());
+        let encoded = encode(&msg);
+        assert_eq!(decode(&encoded), Ok(msg))
+    }
+
+    #[test]
+    fn encode_decode_error() {
+        let msg = Msg::Error(ErrorMsg {
+            message: "error".to_string(),
+        });
+        let encoded = encode(&msg);
+        assert_eq!(decode(&encoded), Ok(msg))
+    }
+
+    #[test]
+    fn encode_decode_ok() {
+        let msg = Msg::Ok;
+        let encoded = encode(&msg);
+        assert_eq!(decode(&encoded), Ok(msg))
+    }
+
+    #[test]
+    fn encode_decode_dial_auth() {
+        let msg = Msg::DialAuth(DialAuth { site: 123 });
+        let encoded = encode(&msg);
+        assert_eq!(decode(&encoded), Ok(msg))
+    }
+
+    #[test]
+    fn encode_decode_target_populations() {
+        let populations = vec![
+            TargetPopulation {
+                species: "dog".to_string(),
+                min: 1,
+                max: 3,
+            },
+            TargetPopulation {
+                species: "rat".to_string(),
+                min: 0,
+                max: 10,
+            },
+        ];
+
+        let msg = Msg::TargetPopulations(TargetPopulations {
+            site: 123,
+            populations,
+        });
         let encoded = encode(&msg);
         assert_eq!(decode(&encoded), Ok(msg))
     }

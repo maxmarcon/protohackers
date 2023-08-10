@@ -76,8 +76,8 @@ impl Queue {
 #[cfg(test)]
 mod tests {
     use crate::jobcentre::{Job, JobState, Queue};
-    use serde_json::{json, Value};
-    use std::collections::{HashMap, HashSet};
+    use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn peek() {

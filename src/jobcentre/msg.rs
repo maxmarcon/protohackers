@@ -175,8 +175,8 @@ pub fn parse(str: &str) -> Result<Msg> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Abort, Delete, Get, Msg, Put};
-    use crate::jobcentre::msg::{Error, Response};
+    use super::{parse, Msg};
+    use crate::jobcentre::msg::Error;
 
     #[test]
     fn parse_put_msg() {
