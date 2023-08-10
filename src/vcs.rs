@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::DirBuilder;
 use std::io;
-use std::io::{Error, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
 pub mod command;
@@ -125,7 +124,7 @@ impl Dir {
                 _ => (),
             }
         }
-        Err(Error::new(ErrorKind::Other, "BAM!"))
+        panic!("failed traversing the path to the file while adding a new revision");
     }
 }
 
