@@ -1,13 +1,17 @@
 use std::string::FromUtf8Error;
 use std::usize;
 
-pub enum Msg {}
+#[derive(PartialEq, Debug)]
+pub enum Msg {
+    Hello(Hello),
+}
 
 #[derive(PartialEq, Debug)]
 pub enum Error {
     InvalidMessage,
     InvalidChecksum,
     InvalidLength,
+    InvalidProtocol,
     FromUtf8Error(FromUtf8Error),
 }
 
@@ -32,20 +36,71 @@ pub struct TargetPopulation {
     max: u32,
 }
 
-pub struct Hello {}
+#[derive(PartialEq, Debug)]
+pub struct Hello {
+    protocol: String,
+    version: u32,
+}
+
+impl Default for Hello {
+    fn default() -> Self {
+        Self {
+            protocol: "pestcontrol".to_string(),
+            version: 1,
+        }
+    }
+}
 
 impl Hello {
     fn decode(buf: &[u8]) -> Result<Hello> {
-        todo!()
+        let protocol = decode_str(buf)?;
+        let version = decode_u32(&buf[15..])?;
+        Ok(Hello { protocol, version })
     }
 
-    fn encode() -> Vec<u8> {
-        todo!()
+    fn encode(&self) -> Vec<u8> {
+        let mut vec = encode_str(&self.protocol);
+        vec.extend_from_slice(&self.version.to_be_bytes());
+        vec
     }
 }
 
 pub fn decode(buf: &[u8]) -> Result<Msg> {
-    todo!()
+    if !valid_checksum(buf) {
+        return Err(Error::InvalidChecksum);
+    }
+
+    match buf[0] {
+        0x50 => {
+            let hello = Hello::decode(&buf[5..])?;
+            if hello.protocol != "pestcontrol" || hello.version != 1 {
+                return Err(Error::InvalidProtocol);
+            }
+            Ok(Msg::Hello(hello))
+        }
+        _ => Err(Error::InvalidMessage),
+    }
+}
+
+pub fn encode(msg: &Msg) -> Vec<u8> {
+    let (code, mut message_body) = match msg {
+        Msg::Hello(hello) => (0x50, hello.encode()),
+    };
+
+    let mut buf = Vec::from([code]);
+    buf.extend_from_slice(&(message_body.len() as u32).to_be_bytes());
+    buf.append(&mut message_body);
+    buf.push(compute_checksum(&buf));
+    buf
+}
+
+fn valid_checksum(buf: &[u8]) -> bool {
+    buf.iter().fold(0_u8, |sum, byte| sum.wrapping_add(*byte)) == 0
+}
+
+fn compute_checksum(buf: &[u8]) -> u8 {
+    let sum = buf.iter().fold(0_u8, |sum, byte| sum.wrapping_add(*byte));
+    0_u8.wrapping_sub(sum)
 }
 
 pub fn decode_u32(buf: &[u8]) -> Result<u32> {
@@ -58,7 +113,7 @@ pub fn decode_u32(buf: &[u8]) -> Result<u32> {
 
 pub fn encode_str(str: &str) -> Vec<u8> {
     let mut v = Vec::from((str.len() as u32).to_be_bytes());
-    v.extend_from_slice(&str.as_bytes());
+    v.extend_from_slice(str.as_bytes());
     v
 }
 
@@ -108,9 +163,9 @@ pub fn decode_target_populations(buf: &[u8]) -> Result<Vec<TargetPopulation>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::pest::msg::decode_target_populations;
     use crate::pest::msg::encode_str;
     use crate::pest::msg::TargetPopulation;
+    use crate::pest::msg::{decode, decode_target_populations, encode, Hello, Msg};
     use crate::pest::msg::{decode_populations, decode_str, Population};
 
     #[test]
@@ -169,5 +224,12 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn encode_decode_hello() {
+        let msg = Msg::Hello(Hello::default());
+        let encoded = encode(&msg);
+        assert_eq!(decode(&encoded), Ok(msg))
     }
 }
