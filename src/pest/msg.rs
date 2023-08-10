@@ -1,7 +1,5 @@
 use crate::pest;
-use crate::pest::{
-    decode_str, decode_target_populations, decode_u32, encode_str, encode_target_populations,
-};
+use crate::pest::{decode_str, decode_target_populations, decode_u32, encode_str, encode_target_populations, Error, target_populations_len};
 
 #[derive(PartialEq, Debug)]
 pub enum Msg {
@@ -30,7 +28,10 @@ impl Default for Hello {
 impl Hello {
     fn decode(buf: &[u8]) -> pest::Result<Self> {
         let protocol = decode_str(buf)?;
-        let version = decode_u32(&buf[15..])?;
+        let version = decode_u32(&buf[4 + protocol.len()..])?;
+        if 5 + protocol.len() + 4 != buf.len() {
+            return Err(Error::InvalidLength)
+        }
         Ok(Self { protocol, version })
     }
 
@@ -49,6 +50,9 @@ pub struct ErrorMsg {
 impl ErrorMsg {
     fn decode(buf: &[u8]) -> pest::Result<Self> {
         let message = decode_str(buf)?;
+        if 5 + message.len() != buf.len() {
+            return Err(Error::InvalidLength)
+        }
         Ok(Self { message })
     }
 
@@ -65,6 +69,9 @@ pub struct DialAuth {
 impl DialAuth {
     fn decode(buf: &[u8]) -> pest::Result<Self> {
         let site = decode_u32(buf)?;
+        if buf.len() != 5 {
+            return  Err(Error::InvalidLength);
+        }
         Ok(Self { site })
     }
 
@@ -83,6 +90,9 @@ impl TargetPopulations {
     fn decode(buf: &[u8]) -> pest::Result<Self> {
         let site = decode_u32(buf)?;
         let populations = decode_target_populations(&buf[4..])?;
+        if 5 + target_populations_len(&populations) != buf.len() {
+            return Err(Error::InvalidLength);
+        }
         Ok(Self { site, populations })
     }
 

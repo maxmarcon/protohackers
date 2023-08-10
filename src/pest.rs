@@ -54,6 +54,10 @@ pub fn decode_u32(buf: &[u8]) -> Result<u32> {
     }
 }
 
+pub fn target_populations_len(target_populations: &[TargetPopulation]) -> usize {
+    4 + target_populations.iter().map(|tp| 12 + tp.species.len()).sum::<usize>()
+}
+
 pub fn encode_target_populations(target_populations: &[TargetPopulation]) -> Vec<u8> {
     let mut buf = Vec::from((target_populations.len() as u32).to_be_bytes());
     for tp in target_populations {
