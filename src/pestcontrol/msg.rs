@@ -1,5 +1,8 @@
-use crate::pest;
-use crate::pest::{decode_str, decode_target_populations, decode_u32, encode_str, encode_target_populations, Error, target_populations_len};
+use crate::pestcontrol;
+use crate::pestcontrol::{
+    decode_str, decode_target_populations, decode_u32, encode_str, encode_target_populations,
+    target_populations_len, Error,
+};
 
 #[derive(PartialEq, Debug)]
 pub enum Msg {
@@ -26,11 +29,11 @@ impl Default for Hello {
 }
 
 impl Hello {
-    fn decode(buf: &[u8]) -> pest::Result<Self> {
+    fn decode(buf: &[u8]) -> pestcontrol::Result<Self> {
         let protocol = decode_str(buf)?;
         let version = decode_u32(&buf[4 + protocol.len()..])?;
         if 5 + protocol.len() + 4 != buf.len() {
-            return Err(Error::InvalidLength)
+            return Err(Error::InvalidLength);
         }
         Ok(Self { protocol, version })
     }
@@ -48,10 +51,10 @@ pub struct ErrorMsg {
 }
 
 impl ErrorMsg {
-    fn decode(buf: &[u8]) -> pest::Result<Self> {
+    fn decode(buf: &[u8]) -> pestcontrol::Result<Self> {
         let message = decode_str(buf)?;
         if 5 + message.len() != buf.len() {
-            return Err(Error::InvalidLength)
+            return Err(Error::InvalidLength);
         }
         Ok(Self { message })
     }
@@ -67,10 +70,10 @@ pub struct DialAuth {
 }
 
 impl DialAuth {
-    fn decode(buf: &[u8]) -> pest::Result<Self> {
+    fn decode(buf: &[u8]) -> pestcontrol::Result<Self> {
         let site = decode_u32(buf)?;
         if buf.len() != 5 {
-            return  Err(Error::InvalidLength);
+            return Err(Error::InvalidLength);
         }
         Ok(Self { site })
     }
@@ -83,11 +86,11 @@ impl DialAuth {
 #[derive(PartialEq, Debug)]
 pub struct TargetPopulations {
     site: u32,
-    populations: Vec<pest::TargetPopulation>,
+    populations: Vec<pestcontrol::TargetPopulation>,
 }
 
 impl TargetPopulations {
-    fn decode(buf: &[u8]) -> pest::Result<Self> {
+    fn decode(buf: &[u8]) -> pestcontrol::Result<Self> {
         let site = decode_u32(buf)?;
         let populations = decode_target_populations(&buf[4..])?;
         if 5 + target_populations_len(&populations) != buf.len() {
@@ -103,9 +106,9 @@ impl TargetPopulations {
     }
 }
 
-pub fn decode(buf: &[u8]) -> pest::Result<Msg> {
+pub fn decode(buf: &[u8]) -> pestcontrol::Result<Msg> {
     if !valid_checksum(buf) {
-        return Err(pest::Error::InvalidChecksum);
+        return Err(pestcontrol::Error::InvalidChecksum);
     }
 
     let code = buf[0];
@@ -114,7 +117,7 @@ pub fn decode(buf: &[u8]) -> pest::Result<Msg> {
         0x50 => {
             let hello = Hello::decode(body)?;
             if hello.protocol != "pestcontrol" || hello.version != 1 {
-                return Err(pest::Error::InvalidProtocol);
+                return Err(pestcontrol::Error::InvalidProtocol);
             }
             Ok(Msg::Hello(hello))
         }
@@ -122,7 +125,7 @@ pub fn decode(buf: &[u8]) -> pest::Result<Msg> {
         0x52 => Ok(Msg::Ok),
         0x53 => Ok(Msg::DialAuth(DialAuth::decode(body)?)),
         0x54 => Ok(Msg::TargetPopulations(TargetPopulations::decode(body)?)),
-        _ => Err(pest::Error::InvalidMessage),
+        _ => Err(pestcontrol::Error::InvalidMessage),
     }
 }
 
@@ -136,7 +139,7 @@ pub fn encode(msg: &Msg) -> Vec<u8> {
     };
 
     let mut buf = Vec::from([code]);
-    buf.extend_from_slice(&(message_body.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&((message_body.len() + 6) as u32).to_be_bytes());
     buf.extend_from_slice(&message_body);
     buf.push(compute_checksum(&buf));
     buf
@@ -153,9 +156,9 @@ fn compute_checksum(buf: &[u8]) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use crate::pest::msg::{decode, encode, Hello, Msg};
-    use crate::pest::msg::{DialAuth, ErrorMsg, TargetPopulations};
-    use crate::pest::TargetPopulation;
+    use crate::pestcontrol::msg::{decode, encode, Hello, Msg};
+    use crate::pestcontrol::msg::{DialAuth, ErrorMsg, TargetPopulations};
+    use crate::pestcontrol::TargetPopulation;
 
     #[test]
     fn encode_decode_hello() {

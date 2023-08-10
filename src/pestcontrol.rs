@@ -55,7 +55,10 @@ pub fn decode_u32(buf: &[u8]) -> Result<u32> {
 }
 
 pub fn target_populations_len(target_populations: &[TargetPopulation]) -> usize {
-    4 + target_populations.iter().map(|tp| 12 + tp.species.len()).sum::<usize>()
+    4 + target_populations
+        .iter()
+        .map(|tp| 12 + tp.species.len())
+        .sum::<usize>()
 }
 
 pub fn encode_target_populations(target_populations: &[TargetPopulation]) -> Vec<u8> {
@@ -119,7 +122,7 @@ mod tests {
         decode_populations, decode_str, decode_target_populations, encode_str, Population,
         TargetPopulation,
     };
-    use crate::pest::{encode_populations, encode_target_populations};
+    use crate::pestcontrol::{encode_populations, encode_target_populations};
 
     #[test]
     fn test_encode_decode_str() {

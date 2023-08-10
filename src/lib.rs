@@ -3,7 +3,7 @@ pub mod budgetchat;
 pub mod isl;
 pub mod jobcentre;
 pub mod lrcp;
-pub mod pest;
+pub mod pestcontrol;
 pub mod speed;
 pub mod vcs;
 
