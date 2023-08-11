@@ -19,6 +19,16 @@ impl From<FromUtf8Error> for Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+trait Decodable {
+    fn decode(buf: &[u8]) -> Result<Self>
+    where
+        Self: Sized;
+
+    fn encode(&self) -> Vec<u8>;
+
+    fn len(&self) -> usize;
+}
+
 #[derive(PartialEq, Debug)]
 pub struct Population {
     species: String,
@@ -32,104 +42,131 @@ pub struct TargetPopulation {
     max: u32,
 }
 
-pub fn encode_str(str: &str) -> Vec<u8> {
-    let mut v = Vec::from((str.len() as u32).to_be_bytes());
-    v.extend_from_slice(str.as_bytes());
-    v
+impl Decodable for String {
+    fn decode(buf: &[u8]) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let strlen = u32::decode(buf)? as usize;
+        if buf.len() < strlen + 4 {
+            return Err(Error::InvalidLength);
+        }
+        Ok(String::from_utf8(buf[4..strlen + 4].to_vec())?)
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut v = Vec::from((self.len() as u32).to_be_bytes());
+        v.extend_from_slice(self.as_bytes());
+        v
+    }
+
+    fn len(&self) -> usize {
+        4 + self.len()
+    }
 }
 
-pub fn decode_str(buf: &[u8]) -> Result<String> {
-    let strlen = decode_u32(buf)? as usize;
-    if buf.len() < strlen + 4 {
-        return Err(Error::InvalidLength);
+impl Decodable for u32 {
+    fn decode(buf: &[u8]) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        if buf.len() < 4 {
+            Err(Error::InvalidLength)
+        } else {
+            Ok(u32::from_be_bytes(buf[..4].try_into().unwrap()))
+        }
     }
-    Ok(String::from_utf8(buf[4..strlen + 4].to_vec())?)
+
+    fn encode(&self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+
+    fn len(&self) -> usize {
+        4
+    }
 }
 
-pub fn decode_u32(buf: &[u8]) -> Result<u32> {
-    if buf.len() < 4 {
-        Err(Error::InvalidLength)
-    } else {
-        Ok(u32::from_be_bytes(buf[..4].try_into().unwrap()))
+impl Decodable for Vec<TargetPopulation> {
+    fn decode(buf: &[u8]) -> Result<Self> {
+        if buf.len() < 4 {
+            return Err(Error::InvalidLength);
+        }
+        let len = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
+        let mut target_populations = Vec::new();
+        let mut cur = 4;
+        for _ in 0..len {
+            let species = String::decode(&buf[cur..])?;
+            cur += 4 + species.len();
+            let min = u32::decode(&buf[cur..])?;
+            cur += 4;
+            let max = u32::decode(&buf[cur..])?;
+            cur += 4;
+            target_populations.push(TargetPopulation { species, min, max });
+        }
+        Ok(target_populations)
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::from((self.len() as u32).to_be_bytes());
+        for tp in self {
+            buf.extend_from_slice(&tp.species.encode());
+            buf.extend_from_slice(&tp.min.to_be_bytes());
+            buf.extend_from_slice(&tp.max.to_be_bytes());
+        }
+        buf
+    }
+
+    fn len(&self) -> usize {
+        4 + self.iter().map(|tp| 12 + tp.species.len()).sum::<usize>()
     }
 }
 
-pub fn target_populations_len(target_populations: &[TargetPopulation]) -> usize {
-    4 + target_populations
-        .iter()
-        .map(|tp| 12 + tp.species.len())
-        .sum::<usize>()
-}
+impl Decodable for Vec<Population> {
+    fn decode(buf: &[u8]) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        if buf.len() < 4 {
+            return Err(Error::InvalidLength);
+        }
+        let len = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
+        let mut populations = Vec::new();
+        let mut cur = 4;
+        for _ in 0..len {
+            let species = String::decode(&buf[cur..])?;
+            cur += 4 + species.len();
+            let count = u32::decode(&buf[cur..])?;
+            cur += 4;
+            populations.push(Population { species, count });
+        }
+        Ok(populations)
+    }
 
-pub fn encode_target_populations(target_populations: &[TargetPopulation]) -> Vec<u8> {
-    let mut buf = Vec::from((target_populations.len() as u32).to_be_bytes());
-    for tp in target_populations {
-        buf.extend_from_slice(&encode_str(&tp.species));
-        buf.extend_from_slice(&tp.min.to_be_bytes());
-        buf.extend_from_slice(&tp.max.to_be_bytes());
+    fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::from((self.len() as u32).to_be_bytes());
+        for p in self {
+            buf.extend_from_slice(&p.species.encode());
+            buf.extend_from_slice(&p.count.to_be_bytes());
+        }
+        buf
     }
-    buf
-}
 
-pub fn decode_target_populations(buf: &[u8]) -> Result<Vec<TargetPopulation>> {
-    if buf.len() < 4 {
-        return Err(Error::InvalidLength);
+    fn len(&self) -> usize {
+        4 + self.iter().map(|p| 8 + p.species.len()).sum::<usize>()
     }
-    let len = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
-    let mut target_populations = Vec::new();
-    let mut cur = 4;
-    for _ in 0..len {
-        let species = decode_str(&buf[cur..])?;
-        cur += 4 + species.len();
-        let min = decode_u32(&buf[cur..])?;
-        cur += 4;
-        let max = decode_u32(&buf[cur..])?;
-        cur += 4;
-        target_populations.push(TargetPopulation { species, min, max });
-    }
-    Ok(target_populations)
-}
-
-pub fn encode_populations(populations: Vec<Population>) -> Vec<u8> {
-    let mut buf = Vec::from((populations.len() as u32).to_be_bytes());
-    for p in populations {
-        buf.extend_from_slice(&encode_str(&p.species));
-        buf.extend_from_slice(&p.count.to_be_bytes());
-    }
-    buf
-}
-
-pub fn decode_populations(buf: &[u8]) -> Result<Vec<Population>> {
-    if buf.len() < 4 {
-        return Err(Error::InvalidLength);
-    }
-    let len = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
-    let mut populations = Vec::new();
-    let mut cur = 4;
-    for _ in 0..len {
-        let species = decode_str(&buf[cur..])?;
-        cur += 4 + species.len();
-        let count = decode_u32(&buf[cur..])?;
-        cur += 4;
-        populations.push(Population { species, count });
-    }
-    Ok(populations)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        decode_populations, decode_str, decode_target_populations, encode_str, Population,
-        TargetPopulation,
-    };
-    use crate::pestcontrol::{encode_populations, encode_target_populations};
+    use super::{Population, TargetPopulation};
+    use crate::pestcontrol::Decodable;
 
     #[test]
-    fn test_encode_decode_str() {
-        let str = "hello my valentine!";
-        let encoded = encode_str(str);
+    fn test_encode_decode_string() {
+        let str = "hello my valentine!".to_string();
+        let encoded = str.encode();
 
-        assert_eq!(decode_str(&encoded), Ok(str.to_string()))
+        assert_eq!(String::decode(&encoded), Ok(str.to_string()))
     }
 
     #[test]
@@ -139,7 +176,7 @@ mod tests {
             0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x03, 0x72, 0x61, 0x74, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x0a,
         ];
-        let decoded = decode_target_populations(&bytes);
+        let decoded = Vec::decode(&bytes);
 
         assert_eq!(
             decoded,
@@ -159,7 +196,7 @@ mod tests {
 
         let target_populations = decoded.unwrap();
 
-        assert_eq!(encode_target_populations(&target_populations), bytes);
+        assert_eq!(target_populations.encode(), bytes);
     }
 
     #[test]
@@ -169,7 +206,7 @@ mod tests {
             0x01, 0x00, 0x00, 0x00, 0x03, 0x72, 0x61, 0x74, 0x00, 0x00, 0x00, 0x05,
         ];
 
-        let decoded = decode_populations(&bytes);
+        let decoded = Vec::decode(&bytes);
 
         assert_eq!(
             decoded,
@@ -187,6 +224,6 @@ mod tests {
 
         let populations = decoded.unwrap();
 
-        assert_eq!(encode_populations(populations), bytes);
+        assert_eq!(populations.encode(), bytes);
     }
 }
