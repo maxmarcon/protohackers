@@ -8,6 +8,7 @@ pub enum Error {
     InvalidChecksum,
     InvalidLength,
     InvalidProtocol,
+    InvalidAction,
     FromUtf8Error(FromUtf8Error),
 }
 
@@ -26,7 +27,7 @@ trait Decodable {
 
     fn encode(&self) -> Vec<u8>;
 
-    fn len(&self) -> usize;
+    fn bytelen(&self) -> usize;
 }
 
 #[derive(PartialEq, Debug)]
@@ -40,6 +41,40 @@ pub struct TargetPopulation {
     species: String,
     min: u32,
     max: u32,
+}
+
+#[derive(PartialEq, Debug)]
+enum Action {
+    Cull,
+    Conserve,
+}
+
+impl Decodable for Action {
+    fn decode(buf: &[u8]) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        if buf.is_empty() {
+            return Err(Error::InvalidLength);
+        }
+        match buf[0] {
+            0x90 => Ok(Action::Cull),
+            0xa0 => Ok(Action::Conserve),
+            _ => Err(Error::InvalidAction),
+        }
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let byte = match self {
+            Action::Cull => 0x90,
+            Action::Conserve => 0xa0,
+        };
+        Vec::from([byte])
+    }
+
+    fn bytelen(&self) -> usize {
+        1
+    }
 }
 
 impl Decodable for String {
@@ -60,7 +95,7 @@ impl Decodable for String {
         v
     }
 
-    fn len(&self) -> usize {
+    fn bytelen(&self) -> usize {
         4 + self.len()
     }
 }
@@ -81,7 +116,7 @@ impl Decodable for u32 {
         self.to_be_bytes().to_vec()
     }
 
-    fn len(&self) -> usize {
+    fn bytelen(&self) -> usize {
         4
     }
 }
@@ -116,7 +151,7 @@ impl Decodable for Vec<TargetPopulation> {
         buf
     }
 
-    fn len(&self) -> usize {
+    fn bytelen(&self) -> usize {
         4 + self.iter().map(|tp| 12 + tp.species.len()).sum::<usize>()
     }
 }
@@ -151,7 +186,7 @@ impl Decodable for Vec<Population> {
         buf
     }
 
-    fn len(&self) -> usize {
+    fn bytelen(&self) -> usize {
         4 + self.iter().map(|p| 8 + p.species.len()).sum::<usize>()
     }
 }

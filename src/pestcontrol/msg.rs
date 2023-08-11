@@ -1,5 +1,5 @@
 use crate::pestcontrol;
-use crate::pestcontrol::{Decodable, Error};
+use crate::pestcontrol::{Action, Decodable, Error, Population};
 
 #[derive(PartialEq, Debug)]
 pub enum Msg {
@@ -8,6 +8,10 @@ pub enum Msg {
     Error(ErrorMsg),
     DialAuth(DialAuth),
     TargetPopulations(TargetPopulations),
+    CreatePolicy(CreatePolicy),
+    DeletePolicy(Policy),
+    PolicyResult(Policy),
+    SiteVisit(SiteVisit),
 }
 
 impl Msg {
@@ -44,6 +48,10 @@ impl Decodable for Msg {
             0x52 => Ok(Msg::Ok),
             0x53 => Ok(Msg::DialAuth(DialAuth::decode(body)?)),
             0x54 => Ok(Msg::TargetPopulations(TargetPopulations::decode(body)?)),
+            0x55 => Ok(Msg::CreatePolicy(CreatePolicy::decode(body)?)),
+            0x56 => Ok(Msg::DeletePolicy(Policy::decode(body)?)),
+            0x57 => Ok(Msg::PolicyResult(Policy::decode(body)?)),
+            0x58 => Ok(Msg::SiteVisit(SiteVisit::decode(body)?)),
             _ => Err(Error::InvalidMessage),
         }
     }
@@ -55,6 +63,10 @@ impl Decodable for Msg {
             Msg::Ok => (0x52, Vec::new()),
             Msg::DialAuth(dial_auth) => (0x53, dial_auth.encode()),
             Msg::TargetPopulations(target_populations) => (0x54, target_populations.encode()),
+            Msg::CreatePolicy(create_policy) => (0x55, create_policy.encode()),
+            Msg::DeletePolicy(policy) => (0x56, policy.encode()),
+            Msg::PolicyResult(policy) => (0x57, policy.encode()),
+            Msg::SiteVisit(site_visit) => (0x58, site_visit.encode()),
         };
 
         let mut buf = Vec::from([code]);
@@ -64,13 +76,17 @@ impl Decodable for Msg {
         buf
     }
 
-    fn len(&self) -> usize {
+    fn bytelen(&self) -> usize {
         let body_size = match self {
-            Msg::Hello(hello) => hello.len(),
-            Msg::Error(error_msg) => error_msg.len(),
+            Msg::Hello(hello) => hello.bytelen(),
+            Msg::Error(error_msg) => error_msg.bytelen(),
             Msg::Ok => 0,
-            Msg::DialAuth(dial_auth) => dial_auth.len(),
-            Msg::TargetPopulations(target_populations) => target_populations.len(),
+            Msg::DialAuth(dial_auth) => dial_auth.bytelen(),
+            Msg::TargetPopulations(target_populations) => target_populations.bytelen(),
+            Msg::CreatePolicy(create_policy) => create_policy.bytelen(),
+            Msg::DeletePolicy(policy) => policy.bytelen(),
+            Msg::PolicyResult(policy) => policy.bytelen(),
+            Msg::SiteVisit(site_visit) => site_visit.bytelen(),
         };
         6 + body_size
     }
@@ -96,7 +112,7 @@ impl Decodable for Hello {
         let protocol = String::decode(buf)?;
         let version = u32::decode(&buf[4 + protocol.len()..])?;
         let hello = Self { protocol, version };
-        if hello.len() != buf.len() {
+        if hello.bytelen() != buf.len() {
             return Err(Error::InvalidLength);
         }
         Ok(hello)
@@ -108,8 +124,8 @@ impl Decodable for Hello {
         vec
     }
 
-    fn len(&self) -> usize {
-        Decodable::len(&self.protocol) + self.version.len()
+    fn bytelen(&self) -> usize {
+        Decodable::bytelen(&self.protocol) + self.version.bytelen()
     }
 }
 
@@ -122,7 +138,7 @@ impl Decodable for ErrorMsg {
     fn decode(buf: &[u8]) -> pestcontrol::Result<Self> {
         let message = String::decode(buf)?;
         let error_msg = Self { message };
-        if error_msg.len() != buf.len() {
+        if error_msg.bytelen() != buf.len() {
             return Err(Error::InvalidLength);
         }
         Ok(error_msg)
@@ -132,8 +148,8 @@ impl Decodable for ErrorMsg {
         self.message.encode()
     }
 
-    fn len(&self) -> usize {
-        Decodable::len(&self.message)
+    fn bytelen(&self) -> usize {
+        Decodable::bytelen(&self.message)
     }
 }
 
@@ -146,7 +162,7 @@ impl Decodable for DialAuth {
     fn decode(buf: &[u8]) -> pestcontrol::Result<Self> {
         let site = u32::decode(buf)?;
         let dial_auth = Self { site };
-        if dial_auth.len() != buf.len() {
+        if dial_auth.bytelen() != buf.len() {
             return Err(Error::InvalidLength);
         }
         Ok(dial_auth)
@@ -156,8 +172,8 @@ impl Decodable for DialAuth {
         Vec::from(self.site.to_be_bytes())
     }
 
-    fn len(&self) -> usize {
-        self.site.len()
+    fn bytelen(&self) -> usize {
+        self.site.bytelen()
     }
 }
 
@@ -172,7 +188,7 @@ impl Decodable for TargetPopulations {
         let site = u32::decode(buf)?;
         let populations = Vec::decode(&buf[4..])?;
         let target_populations = Self { site, populations };
-        if target_populations.len() != buf.len() {
+        if target_populations.bytelen() != buf.len() {
             return Err(Error::InvalidLength);
         }
         Ok(target_populations)
@@ -184,16 +200,108 @@ impl Decodable for TargetPopulations {
         buf
     }
 
-    fn len(&self) -> usize {
-        self.site.len() + Decodable::len(&self.populations)
+    fn bytelen(&self) -> usize {
+        self.site.bytelen() + Decodable::bytelen(&self.populations)
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct CreatePolicy {
+    species: String,
+    action: Action,
+}
+
+impl Decodable for CreatePolicy {
+    fn decode(buf: &[u8]) -> pestcontrol::Result<Self>
+    where
+        Self: Sized,
+    {
+        let species = String::decode(buf)?;
+        let action = Action::decode(&buf[species.bytelen()..])?;
+        let create_policy = Self { species, action };
+        if create_policy.bytelen() != buf.len() {
+            return Err(Error::InvalidLength);
+        }
+        Ok(create_policy)
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut buf = self.species.encode();
+        buf.extend_from_slice(&self.action.encode());
+        buf
+    }
+
+    fn bytelen(&self) -> usize {
+        self.species.bytelen() + self.action.bytelen()
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct Policy {
+    policy: u32,
+}
+
+impl Decodable for Policy {
+    fn decode(buf: &[u8]) -> pestcontrol::Result<Self>
+    where
+        Self: Sized,
+    {
+        let delete_policy = Self {
+            policy: u32::decode(buf)?,
+        };
+        if delete_policy.bytelen() != buf.len() {
+            return Err(Error::InvalidLength);
+        }
+        Ok(delete_policy)
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        self.policy.encode()
+    }
+
+    fn bytelen(&self) -> usize {
+        self.policy.bytelen()
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct SiteVisit {
+    site: u32,
+    populations: Vec<Population>,
+}
+
+impl Decodable for SiteVisit {
+    fn decode(buf: &[u8]) -> pestcontrol::Result<Self>
+    where
+        Self: Sized,
+    {
+        let site = u32::decode(buf)?;
+        let populations = Vec::decode(&buf[site.bytelen()..])?;
+        let site_visit = Self { site, populations };
+        if site_visit.bytelen() != buf.len() {
+            return Err(Error::InvalidLength);
+        }
+        Ok(site_visit)
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut buf = self.site.encode();
+        buf.extend_from_slice(&self.populations.encode());
+        buf
+    }
+
+    fn bytelen(&self) -> usize {
+        self.site.bytelen() + self.populations.bytelen()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::pestcontrol::msg::{DialAuth, ErrorMsg, TargetPopulations};
+    use crate::pestcontrol::msg::{
+        CreatePolicy, DialAuth, ErrorMsg, Policy, SiteVisit, TargetPopulations,
+    };
     use crate::pestcontrol::msg::{Hello, Msg};
-    use crate::pestcontrol::{Decodable, TargetPopulation};
+    use crate::pestcontrol::{Action, Decodable, Population, TargetPopulation};
 
     #[test]
     fn encode_decode_hello() {
@@ -243,6 +351,49 @@ mod tests {
         let msg = Msg::TargetPopulations(TargetPopulations {
             site: 123,
             populations,
+        });
+        let encoded = msg.encode();
+        assert_eq!(Msg::decode(&encoded), Ok(msg))
+    }
+
+    #[test]
+    fn encode_decode_create_polocy() {
+        let msg = Msg::CreatePolicy(CreatePolicy {
+            species: "dog".to_string(),
+            action: Action::Cull,
+        });
+        let encoded = msg.encode();
+        assert_eq!(Msg::decode(&encoded), Ok(msg))
+    }
+
+    #[test]
+    fn encode_decode_delete_policy() {
+        let msg = Msg::DeletePolicy(Policy { policy: 123 });
+        let encoded = msg.encode();
+        assert_eq!(Msg::decode(&encoded), Ok(msg))
+    }
+
+    #[test]
+    fn encode_decode_policy_result() {
+        let msg = Msg::PolicyResult(Policy { policy: 123 });
+        let encoded = msg.encode();
+        assert_eq!(Msg::decode(&encoded), Ok(msg))
+    }
+
+    #[test]
+    fn encode_decode_site_visit() {
+        let msg = Msg::SiteVisit(SiteVisit {
+            site: 123,
+            populations: vec![
+                Population {
+                    species: "dog".to_string(),
+                    count: 30,
+                },
+                Population {
+                    species: "rat".to_string(),
+                    count: 3000,
+                },
+            ],
         });
         let encoded = msg.encode();
         assert_eq!(Msg::decode(&encoded), Ok(msg))
