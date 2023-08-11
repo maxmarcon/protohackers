@@ -1,7 +1,7 @@
 use crate::pestcontrol;
 use crate::pestcontrol::{Action, Decodable, Error, Population};
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Msg {
     Hello(Hello),
     Ok,
@@ -92,7 +92,7 @@ impl Decodable for Msg {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Hello {
     protocol: String,
     version: u32,
@@ -129,7 +129,7 @@ impl Decodable for Hello {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct ErrorMsg {
     message: String,
 }
@@ -153,7 +153,7 @@ impl Decodable for ErrorMsg {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct DialAuth {
     site: u32,
 }
@@ -177,7 +177,7 @@ impl Decodable for DialAuth {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct TargetPopulations {
     site: u32,
     populations: Vec<pestcontrol::TargetPopulation>,
@@ -205,7 +205,7 @@ impl Decodable for TargetPopulations {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct CreatePolicy {
     species: String,
     action: Action,
@@ -236,7 +236,7 @@ impl Decodable for CreatePolicy {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Policy {
     policy: u32,
 }
@@ -264,7 +264,7 @@ impl Decodable for Policy {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct SiteVisit {
     site: u32,
     populations: Vec<Population>,
@@ -305,32 +305,31 @@ mod tests {
 
     #[test]
     fn encode_decode_hello() {
-        let msg = Msg::Hello(Hello::default());
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        let msg = Hello::default();
+        let encoded = Msg::Hello(msg.clone()).encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::Hello(m)) if m == msg));
     }
 
     #[test]
     fn encode_decode_error() {
-        let msg = Msg::Error(ErrorMsg {
+        let msg = ErrorMsg {
             message: "error".to_string(),
-        });
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        };
+        let encoded = Msg::Error(msg.clone()).encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::Error(m)) if m == msg));
     }
 
     #[test]
     fn encode_decode_ok() {
-        let msg = Msg::Ok;
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        let encoded = Msg::Ok.encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::Ok)));
     }
 
     #[test]
     fn encode_decode_dial_auth() {
-        let msg = Msg::DialAuth(DialAuth { site: 123 });
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        let msg = DialAuth { site: 123 };
+        let encoded = Msg::DialAuth(msg.clone()).encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::DialAuth(m)) if m == msg));
     }
 
     #[test]
@@ -348,41 +347,41 @@ mod tests {
             },
         ];
 
-        let msg = Msg::TargetPopulations(TargetPopulations {
+        let msg = TargetPopulations {
             site: 123,
             populations,
-        });
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        };
+        let encoded = Msg::TargetPopulations(msg.clone()).encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::TargetPopulations(m)) if m == msg));
     }
 
     #[test]
     fn encode_decode_create_polocy() {
-        let msg = Msg::CreatePolicy(CreatePolicy {
+        let msg = CreatePolicy {
             species: "dog".to_string(),
             action: Action::Cull,
-        });
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        };
+        let encoded = Msg::CreatePolicy(msg.clone()).encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::CreatePolicy(m)) if m == msg));
     }
 
     #[test]
     fn encode_decode_delete_policy() {
-        let msg = Msg::DeletePolicy(Policy { policy: 123 });
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        let msg = Policy { policy: 123 };
+        let encoded = Msg::DeletePolicy(msg.clone()).encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::DeletePolicy(m)) if m == msg));
     }
 
     #[test]
     fn encode_decode_policy_result() {
-        let msg = Msg::PolicyResult(Policy { policy: 123 });
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        let msg = Policy { policy: 123 };
+        let encoded = Msg::PolicyResult(msg.clone()).encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::PolicyResult(m)) if m == msg));
     }
 
     #[test]
     fn encode_decode_site_visit() {
-        let msg = Msg::SiteVisit(SiteVisit {
+        let msg = SiteVisit {
             site: 123,
             populations: vec![
                 Population {
@@ -394,8 +393,8 @@ mod tests {
                     count: 3000,
                 },
             ],
-        });
-        let encoded = msg.encode();
-        assert_eq!(Msg::decode(&encoded), Ok(msg))
+        };
+        let encoded = Msg::SiteVisit(msg.clone()).encode();
+        assert!(matches!(Msg::decode(&encoded), Ok(Msg::SiteVisit(m)) if m == msg));
     }
 }

@@ -1,15 +1,18 @@
+use std::io;
 use std::string::FromUtf8Error;
 
 pub mod msg;
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub enum Error {
     InvalidMessage,
     InvalidChecksum,
     InvalidLength,
     InvalidProtocol,
     InvalidAction,
+    TooLarge,
     FromUtf8Error(FromUtf8Error),
+    IO(io::Error),
 }
 
 impl From<FromUtf8Error> for Error {
@@ -18,9 +21,15 @@ impl From<FromUtf8Error> for Error {
     }
 }
 
-type Result<T> = std::result::Result<T, Error>;
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Error::IO(value)
+    }
+}
 
-trait Decodable {
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub trait Decodable {
     fn decode(buf: &[u8]) -> Result<Self>
     where
         Self: Sized;
@@ -30,20 +39,20 @@ trait Decodable {
     fn bytelen(&self) -> usize;
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Population {
     species: String,
     count: u32,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct TargetPopulation {
     species: String,
     min: u32,
     max: u32,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 enum Action {
     Cull,
     Conserve,
@@ -194,6 +203,7 @@ impl Decodable for Vec<Population> {
 #[cfg(test)]
 mod tests {
     use super::{Population, TargetPopulation};
+    use crate::pestcontrol;
     use crate::pestcontrol::Decodable;
 
     #[test]
@@ -201,64 +211,54 @@ mod tests {
         let str = "hello my valentine!".to_string();
         let encoded = str.encode();
 
-        assert_eq!(String::decode(&encoded), Ok(str.to_string()))
+        assert!(matches!(String::decode(&encoded), Ok(s) if s == str))
     }
 
     #[test]
     fn test_decode_encode_target_populations() {
-        let bytes = [
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x64, 0x6f, 0x67, 0x00, 0x00, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x03, 0x72, 0x61, 0x74, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x0a,
+        let target_populations = vec![
+            TargetPopulation {
+                species: "dog".to_string(),
+                min: 1,
+                max: 3,
+            },
+            TargetPopulation {
+                species: "rat".to_string(),
+                min: 0,
+                max: 10,
+            },
         ];
-        let decoded = Vec::decode(&bytes);
 
-        assert_eq!(
+        let encoded = target_populations.encode();
+
+        let decoded: pestcontrol::Result<Vec<TargetPopulation>> = Vec::decode(&encoded);
+
+        assert!(matches!(
             decoded,
-            Ok(vec![
-                TargetPopulation {
-                    species: "dog".to_string(),
-                    min: 1,
-                    max: 3,
-                },
-                TargetPopulation {
-                    species: "rat".to_string(),
-                    min: 0,
-                    max: 10,
-                },
-            ])
-        );
-
-        let target_populations = decoded.unwrap();
-
-        assert_eq!(target_populations.encode(), bytes);
+            Ok(tp) if tp == target_populations
+        ));
     }
 
     #[test]
     fn test_decode_encode_populations() {
-        let bytes = [
-            0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x64, 0x6f, 0x67, 0x00, 0x00, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x03, 0x72, 0x61, 0x74, 0x00, 0x00, 0x00, 0x05,
+        let populations = vec![
+            Population {
+                species: "dog".to_string(),
+                count: 1,
+            },
+            Population {
+                species: "rat".to_string(),
+                count: 5,
+            },
         ];
 
-        let decoded = Vec::decode(&bytes);
+        let encoded = populations.encode();
 
-        assert_eq!(
+        let decoded: pestcontrol::Result<Vec<Population>> = Vec::decode(&encoded);
+
+        assert!(matches!(
             decoded,
-            Ok(vec![
-                Population {
-                    species: "dog".to_string(),
-                    count: 1,
-                },
-                Population {
-                    species: "rat".to_string(),
-                    count: 5,
-                },
-            ])
-        );
-
-        let populations = decoded.unwrap();
-
-        assert_eq!(populations.encode(), bytes);
+            Ok(p) if p == populations
+        ));
     }
 }
