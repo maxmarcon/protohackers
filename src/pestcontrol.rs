@@ -36,7 +36,10 @@ impl std::error::Error for Error {}
 
 impl From<Error> for io::Error {
     fn from(value: Error) -> Self {
-        io::Error::new(ErrorKind::Other, value)
+        match value {
+            Error::IO(error) => error,
+            error => io::Error::new(ErrorKind::Other, error),
+        }
     }
 }
 
@@ -78,7 +81,7 @@ pub struct TargetPopulation {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-enum Action {
+pub enum Action {
     Cull,
     Conserve,
 }

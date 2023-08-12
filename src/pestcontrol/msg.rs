@@ -134,8 +134,16 @@ pub struct ErrorMsg {
     message: String,
 }
 
-impl From<Error> for ErrorMsg {
-    fn from(value: Error) -> Self {
+impl ErrorMsg {
+    pub fn new(message: &str) -> Self {
+        Self {
+            message: message.to_string(),
+        }
+    }
+}
+
+impl From<&Error> for ErrorMsg {
+    fn from(value: &Error) -> Self {
         Self {
             message: value.to_string(),
         }
@@ -274,7 +282,7 @@ impl Decodable for Policy {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct SiteVisit {
-    site: u32,
+    pub site: u32,
     populations: Vec<Population>,
 }
 
