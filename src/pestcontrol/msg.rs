@@ -134,6 +134,14 @@ pub struct ErrorMsg {
     message: String,
 }
 
+impl From<Error> for ErrorMsg {
+    fn from(value: Error) -> Self {
+        Self {
+            message: value.to_string(),
+        }
+    }
+}
+
 impl Decodable for ErrorMsg {
     fn decode(buf: &[u8]) -> pestcontrol::Result<Self> {
         let message = String::decode(buf)?;

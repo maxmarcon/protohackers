@@ -1,4 +1,6 @@
+use std::fmt::{Display, Formatter};
 use std::io;
+use std::io::ErrorKind;
 use std::string::FromUtf8Error;
 
 pub mod msg;
@@ -13,6 +15,29 @@ pub enum Error {
     TooLarge,
     FromUtf8Error(FromUtf8Error),
     IO(io::Error),
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::InvalidMessage => write!(f, "invalid message"),
+            Error::InvalidChecksum => write!(f, "invalid checksum"),
+            Error::InvalidLength => write!(f, "invalid message length"),
+            Error::InvalidProtocol => write!(f, "invalid protocol"),
+            Error::InvalidAction => write!(f, "invalid action"),
+            Error::TooLarge => write!(f, "message too large"),
+            Error::FromUtf8Error(error) => write!(f, "{error}"),
+            Error::IO(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl From<Error> for io::Error {
+    fn from(value: Error) -> Self {
+        io::Error::new(ErrorKind::Other, value)
+    }
 }
 
 impl From<FromUtf8Error> for Error {
