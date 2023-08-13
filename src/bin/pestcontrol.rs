@@ -183,7 +183,7 @@ async fn authority_client(
             site_visit = receiver.recv(), if expected.is_none() => {
                 let site_visit = site_visit.unwrap();
                 if site_visit.site == site {
-                    process_site_visit(site_visit.populations, &site_policy,  &target_populations.as_ref().unwrap(), &writer).await?;
+                    expected_messages = process_site_visit(site_visit.populations, &site_policy,  &target_populations.as_ref().unwrap(), &writer).await?;
                 }
             }
         }
@@ -212,12 +212,12 @@ async fn process_site_visit(
     site_policy: &Arc<RwLock<SitePolicy>>,
     target_populations: &Vec<TargetPopulation>,
     writer: &BufWriter<WriteHalf<'_>>,
-) -> io::Result<()> {
+) -> io::Result<VecDeque<Expected>> {
     let site_policy = site_policy.write().unwrap();
     for population in site_visit {
         
     }
     
     
-    Ok(())
+    Ok(VecDeque::new())
 }
