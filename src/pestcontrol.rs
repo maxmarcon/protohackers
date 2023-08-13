@@ -13,6 +13,7 @@ pub enum Error {
     InvalidProtocol,
     InvalidAction,
     TooLarge,
+    Unexpected,
     FromUtf8Error(FromUtf8Error),
     IO(io::Error),
 }
@@ -26,6 +27,7 @@ impl Display for Error {
             Error::InvalidProtocol => write!(f, "invalid protocol"),
             Error::InvalidAction => write!(f, "invalid action"),
             Error::TooLarge => write!(f, "message too large"),
+            Error::Unexpected => write!(f, "unexpected message"),
             Error::FromUtf8Error(error) => write!(f, "{error}"),
             Error::IO(error) => write!(f, "{error}"),
         }

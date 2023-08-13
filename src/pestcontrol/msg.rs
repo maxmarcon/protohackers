@@ -195,8 +195,8 @@ impl Decodable for DialAuth {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct TargetPopulations {
-    site: u32,
-    populations: Vec<pestcontrol::TargetPopulation>,
+    pub site: u32,
+    pub populations: Vec<pestcontrol::TargetPopulation>,
 }
 
 impl Decodable for TargetPopulations {
@@ -254,7 +254,7 @@ impl Decodable for CreatePolicy {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Policy {
-    policy: u32,
+    pub policy: u32,
 }
 
 impl Decodable for Policy {

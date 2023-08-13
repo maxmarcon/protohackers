@@ -3,9 +3,9 @@ use futures::future::BoxFuture;
 use futures::Stream;
 use futures::StreamExt;
 use protohackers::pestcontrol::msg::{ErrorMsg, Hello, Msg, SiteVisit};
-use protohackers::pestcontrol::{Action, Decodable, Error};
+use protohackers::pestcontrol::{Action, Decodable, Error, TargetPopulation};
 use protohackers::{pestcontrol, CliArgs, Parser, Server};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufWriter};
@@ -27,22 +27,14 @@ fn main() {
     let connected_authorities = Arc::new(RwLock::new(HashSet::new()));
     let site_policy = Arc::new(RwLock::new(HashMap::new()));
 
-    let (sender, receiver) = tokio::sync::broadcast::channel(256);
+    let (sender, _receiver) = tokio::sync::broadcast::channel(256);
 
     let handler = Arc::new(move |tcpstream| -> BoxFuture<'static, io::Result<()>> {
         let connected_authorities = connected_authorities.clone();
         let site_policy = site_policy.clone();
-        let receiver = sender.subscribe();
         let sender = sender.clone();
         Box::pin(async {
-            handle_stream(
-                tcpstream,
-                connected_authorities,
-                site_policy,
-                sender,
-                receiver,
-            )
-            .await
+            handle_stream(tcpstream, connected_authorities, site_policy, sender).await
         })
     });
 
@@ -56,7 +48,6 @@ async fn handle_stream(
     connected_authorities: Arc<RwLock<HashSet<u32>>>,
     site_policy: Arc<RwLock<SitePolicy>>,
     sender: Sender<SiteVisit>,
-    receiver: Receiver<SiteVisit>,
 ) -> io::Result<()> {
     let (tcpreader, tcpwriter) = tcpstream.split();
 
@@ -83,13 +74,20 @@ async fn handle_stream(
                         hello_received = true;
                     }
                     Msg::SiteVisit(site_visit) if hello_received => {
-                        let mut connected_authorities_write =
-                            connected_authorities.write().unwrap();
-                        if !connected_authorities_write.contains(&site_visit.site) {
+                        if !connected_authorities
+                            .read()
+                            .unwrap()
+                            .contains(&site_visit.site)
+                        {
                             let connected_authorities = connected_authorities.clone();
                             let site_policy = site_policy.clone();
                             let receiver = sender.subscribe();
                             tokio::spawn(async move {
+                                println!("starting authority client for site {}", site_visit.site);
+                                connected_authorities
+                                    .write()
+                                    .unwrap()
+                                    .insert(site_visit.site);
                                 let result = authority_client(
                                     site_visit.site,
                                     connected_authorities.clone(),
@@ -101,15 +99,19 @@ async fn handle_stream(
                                     .write()
                                     .unwrap()
                                     .remove(&site_visit.site);
-                                result
+                                result.unwrap_or_else(|error| {
+                                    println!(
+                                        "authority client for site {} failed with error: {}",
+                                        site_visit.site, error
+                                    )
+                                });
                             });
-                            connected_authorities_write.insert(site_visit.site);
                         }
                         sender.send(site_visit).unwrap();
                     }
                     _ => {
                         writer
-                            .write_all(&Msg::Error(ErrorMsg::new("unexpected messsage")).encode())
+                            .write_all(&Msg::Error(ErrorMsg::from(&Error::Unexpected)).encode())
                             .await?;
                         break;
                     }
@@ -119,6 +121,7 @@ async fn handle_stream(
     }
 }
 
+#[derive(PartialEq)]
 enum Expected {
     Hello,
     TargetPopulations,
@@ -129,7 +132,7 @@ enum Expected {
 async fn authority_client(
     site: u32,
     connected_authorities: Arc<RwLock<HashSet<u32>>>,
-    connected_site_policy: Arc<RwLock<SitePolicy>>,
+    site_policy: Arc<RwLock<SitePolicy>>,
     mut receiver: Receiver<SiteVisit>,
 ) -> io::Result<()> {
     let mut tcpstream = TcpStream::connect(AUTHORITY_SERVER).await?;
@@ -142,18 +145,47 @@ async fn authority_client(
         .write_all(&Msg::Hello(Hello::default()).encode())
         .await?;
 
-    let next_expected = vec![Expected::Hello, Expected::TargetPopulations];
-
+    let mut expected_messages = VecDeque::from(vec![Expected::Hello, Expected::TargetPopulations]);
+    let mut target_populations = None;
     loop {
+        let expected = expected_messages.pop_front();
         tokio::select! {
             msg = message_stream.next() => {
-
+                if msg.is_none() {
+                    break;
+                }
+                if expected.is_none() {
+                    writer.write_all(&Msg::Error(ErrorMsg::from(&Error::Unexpected)).encode()).await?;
+                    break;
+                }
+                let msg = msg.unwrap()?;
+                let expected= expected.unwrap();
+                match msg {
+                    Msg::Hello(_) if expected == Expected::Hello => {},
+                    Msg::TargetPopulations(target_populations_msg) if expected == Expected::TargetPopulations && target_populations_msg.site == site => {
+                        target_populations = Some(target_populations_msg.populations);
+                    },
+                    Msg::Ok if expected == Expected::Ok => {},
+                    Msg::PolicyResult(policy_result) if matches!(expected, Expected::PolicyResult(_)) => {
+                        if let Expected::PolicyResult(species) = expected {
+                            let mut site_policy = site_policy.write().unwrap();
+                            site_policy.entry(site).or_default().entry(species).and_modify(|policy| {
+                                policy.0 = policy_result.policy
+                            });
+                        }
+                    },
+                    _ => {
+                        writer.write_all(&Msg::Error(ErrorMsg::from(&Error::Unexpected)).encode()).await?;
+                        break;
+                    }
+                }
             },
-            site_visit = receiver.recv() => {
+            site_visit = receiver.recv(), if expected.is_none() => {
 
             }
         }
     }
+    Ok(())
 }
 
 fn message_stream(tcpreader: ReadHalf) -> impl Stream<Item = pestcontrol::Result<Msg>> + '_ {
