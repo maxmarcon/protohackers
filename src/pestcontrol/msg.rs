@@ -283,7 +283,7 @@ impl Decodable for Policy {
 #[derive(PartialEq, Debug, Clone)]
 pub struct SiteVisit {
     pub site: u32,
-    populations: Vec<Population>,
+    pub populations: Vec<Population>,
 }
 
 impl Decodable for SiteVisit {

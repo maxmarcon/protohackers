@@ -3,14 +3,14 @@ use futures::future::BoxFuture;
 use futures::Stream;
 use futures::StreamExt;
 use protohackers::pestcontrol::msg::{ErrorMsg, Hello, Msg, SiteVisit};
-use protohackers::pestcontrol::{Action, Decodable, Error, TargetPopulation};
+use protohackers::pestcontrol::{Action, Decodable, Error, Population, TargetPopulation};
 use protohackers::{pestcontrol, CliArgs, Parser, Server};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufWriter};
 use tokio::io::{AsyncReadExt, BufReader};
-use tokio::net::tcp::ReadHalf;
+use tokio::net::tcp::{WriteHalf,ReadHalf};
 use tokio::net::TcpStream;
 use tokio::pin;
 use tokio::sync::broadcast::{Receiver, Sender};
@@ -181,7 +181,10 @@ async fn authority_client(
                 }
             },
             site_visit = receiver.recv(), if expected.is_none() => {
-
+                let site_visit = site_visit.unwrap();
+                if site_visit.site == site {
+                    process_site_visit(site_visit.populations, &site_policy,  &target_populations.as_ref().unwrap(), &writer).await?;
+                }
             }
         }
     }
@@ -202,4 +205,19 @@ fn message_stream(tcpreader: ReadHalf) -> impl Stream<Item = pestcontrol::Result
             yield Msg::decode(&buf[..length]);
         }
     }
+}
+
+async fn process_site_visit(
+    site_visit: Vec<Population>,
+    site_policy: &Arc<RwLock<SitePolicy>>,
+    target_populations: &Vec<TargetPopulation>,
+    writer: &BufWriter<WriteHalf<'_>>,
+) -> io::Result<()> {
+    let site_policy = site_policy.write().unwrap();
+    for population in site_visit {
+        
+    }
+    
+    
+    Ok(())
 }
