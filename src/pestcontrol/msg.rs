@@ -171,7 +171,7 @@ impl Decodable for ErrorMsg {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct DialAuth {
-    site: u32,
+    pub site: u32,
 }
 
 impl Decodable for DialAuth {

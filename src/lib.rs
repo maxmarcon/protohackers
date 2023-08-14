@@ -28,7 +28,7 @@ pub struct CliArgs {
         short = 'c',
         long,
         help = "Serve at most these many connections in parallel",
-        default_value_t = 100
+        default_value_t = 1_000
     )]
     pub max_connections: u16,
 

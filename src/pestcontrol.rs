@@ -7,6 +7,7 @@ pub mod msg;
 
 #[derive(Debug)]
 pub enum Error {
+    ConflictingCount,
     InvalidMessage,
     InvalidChecksum,
     InvalidLength,
@@ -29,6 +30,7 @@ impl Display for Error {
             Error::TooLarge => write!(f, "message too large"),
             Error::Unexpected => write!(f, "unexpected message"),
             Error::FromUtf8Error(error) => write!(f, "{error}"),
+            Error::ConflictingCount => write!(f, "conflicting count"),
             Error::IO(error) => write!(f, "{error}"),
         }
     }
@@ -82,7 +84,7 @@ pub struct TargetPopulation {
     pub max: u32,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Action {
     Cull,
     Conserve,
