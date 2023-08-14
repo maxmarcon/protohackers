@@ -71,15 +71,15 @@ pub trait Decodable {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Population {
-    species: String,
-    count: u32,
+    pub species: String,
+    pub count: u32,
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct TargetPopulation {
-    species: String,
-    min: u32,
-    max: u32,
+    pub species: String,
+    pub min: u32,
+    pub max: u32,
 }
 
 #[derive(PartialEq, Debug, Clone)]

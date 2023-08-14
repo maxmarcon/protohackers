@@ -2,15 +2,15 @@ use async_stream::stream;
 use futures::future::BoxFuture;
 use futures::Stream;
 use futures::StreamExt;
-use protohackers::pestcontrol::msg::{ErrorMsg, Hello, Msg, SiteVisit};
-use protohackers::pestcontrol::{Action, Decodable, Error, Population, TargetPopulation};
+use protohackers::pestcontrol::msg::{CreatePolicy, ErrorMsg, Hello, Msg, Policy, SiteVisit};
+use protohackers::pestcontrol::{Action, Decodable, Error, Population};
 use protohackers::{pestcontrol, CliArgs, Parser, Server};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::{Arc, RwLock};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufWriter};
 use tokio::io::{AsyncReadExt, BufReader};
-use tokio::net::tcp::{ReadHalf, WriteHalf};
+use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::net::tcp::ReadHalf;
 use tokio::net::TcpStream;
 use tokio::pin;
 use tokio::sync::broadcast::{Receiver, Sender};
@@ -88,23 +88,18 @@ async fn handle_stream(
                                     .write()
                                     .unwrap()
                                     .insert(site_visit.site);
-                                let result = authority_client(
-                                    site_visit.site,
-                                    connected_authorities.clone(),
-                                    site_policy,
-                                    receiver,
-                                )
-                                .await;
+                                let result =
+                                    authority_client(site_visit.site, site_policy, receiver).await;
                                 connected_authorities
                                     .write()
                                     .unwrap()
                                     .remove(&site_visit.site);
-                                result.unwrap_or_else(|error| {
-                                    println!(
-                                        "authority client for site {} failed with error: {}",
-                                        site_visit.site, error
-                                    )
-                                });
+                                print!("authority client for site {} terminated", site_visit.site);
+                                if let Err(error) = &result {
+                                    print!(" with error: {}", error)
+                                }
+                                println!();
+                                result
                             });
                         }
                         sender.send(site_visit).unwrap();
@@ -131,7 +126,6 @@ enum Expected {
 
 async fn authority_client(
     site: u32,
-    connected_authorities: Arc<RwLock<HashSet<u32>>>,
     site_policy: Arc<RwLock<SitePolicy>>,
     mut receiver: Receiver<SiteVisit>,
 ) -> io::Result<()> {
@@ -146,24 +140,23 @@ async fn authority_client(
         .await?;
 
     let mut expected_messages = VecDeque::from(vec![Expected::Hello, Expected::TargetPopulations]);
-    let mut target_populations = None;
+    let mut target_populations = HashMap::new();
     loop {
-        let expected = expected_messages.pop_front();
+        let expected_next = expected_messages.pop_front();
         tokio::select! {
-            msg = message_stream.next() => {
-                if msg.is_none() {
-                    break;
-                }
-                if expected.is_none() {
+            Some(msg) = message_stream.next() => {
+                if expected_next.is_none() {
                     writer.write_all(&Msg::Error(ErrorMsg::from(&Error::Unexpected)).encode()).await?;
                     break;
                 }
-                let msg = msg.unwrap()?;
-                let expected= expected.unwrap();
+                let msg = msg?;
+                let expected= expected_next.unwrap();
                 match msg {
                     Msg::Hello(_) if expected == Expected::Hello => {},
                     Msg::TargetPopulations(target_populations_msg) if expected == Expected::TargetPopulations && target_populations_msg.site == site => {
-                        target_populations = Some(target_populations_msg.populations);
+                        for population in target_populations_msg.populations {
+                            target_populations.insert(population.species, (population.min, population.max));
+                        }
                     },
                     Msg::Ok if expected == Expected::Ok => {},
                     Msg::PolicyResult(policy_result) if matches!(expected, Expected::PolicyResult(_)) => {
@@ -180,12 +173,20 @@ async fn authority_client(
                     }
                 }
             },
-            site_visit = receiver.recv(), if expected.is_none() => {
-                let site_visit = site_visit.unwrap();
+            Ok(site_visit) = receiver.recv(), if expected_next.is_none() => {
                 if site_visit.site == site {
-                    expected_messages = process_site_visit(site_visit.populations, &site_policy,  &target_populations.as_ref().unwrap(), &writer).await?;
+                    let messages = process_site_visit(site, site_visit.populations, &site_policy,  &target_populations);
+                    for message in messages {
+                        writer.write_all(&message.encode()).await?;
+                        match message {
+                            Msg::DeletePolicy(_) => expected_messages.push_back(Expected::Ok),
+                            Msg::CreatePolicy(CreatePolicy{species, ..}) => expected_messages.push_back(Expected::PolicyResult(species)),
+                            _ => panic!("unexpected message sent to server")
+                        }
+                    }
                 }
-            }
+            },
+            else => break
         }
     }
     Ok(())
@@ -207,14 +208,69 @@ fn message_stream(tcpreader: ReadHalf) -> impl Stream<Item = pestcontrol::Result
     }
 }
 
-async fn process_site_visit(
-    site_visit: Vec<Population>,
+fn process_site_visit(
+    site: u32,
+    observed_populations: Vec<Population>,
     site_policy: &Arc<RwLock<SitePolicy>>,
-    target_populations: &Vec<TargetPopulation>,
-    writer: &BufWriter<WriteHalf<'_>>,
-) -> io::Result<VecDeque<Expected>> {
-    let site_policy = site_policy.write().unwrap();
-    for population in site_visit {}
+    target_populations: &HashMap<String, (u32, u32)>,
+) -> Vec<Msg> {
+    let mut site_policy = site_policy.write().unwrap();
+    let site_policies = site_policy.entry(site).or_default();
+    let mut messages = Vec::new();
+    for population in observed_populations {
+        if let Some(&(min, max)) = target_populations.get(&population.species) {
+            if population.count < min {
+                messages.append(&mut maybe_create_policy(
+                    site_policies,
+                    population.species,
+                    Action::Conserve,
+                ));
+            } else if population.count > max {
+                messages.append(&mut maybe_create_policy(
+                    site_policies,
+                    population.species,
+                    Action::Cull,
+                ));
+            } else if let Some(msg) = maybe_delete_policy(site_policies, population.species) {
+                messages.push(msg);
+            }
+        }
+    }
 
-    Ok(VecDeque::new())
+    Vec::new()
+}
+
+fn maybe_create_policy(
+    site_policies: &mut HashMap<String, (u32, Action)>,
+    species: String,
+    action: Action,
+) -> Vec<Msg> {
+    let mut messages = Vec::new();
+    let create_policy = {
+        if let Some((policy_id, current_action)) = site_policies.get(&species) {
+            if *current_action != action {
+                messages.push(Msg::DeletePolicy(Policy { policy: *policy_id }));
+                true
+            } else {
+                false
+            }
+        } else {
+            true
+        }
+    };
+    if create_policy {
+        messages.push(Msg::CreatePolicy(CreatePolicy { species, action }));
+    }
+    messages
+}
+
+fn maybe_delete_policy(
+    site_policies: &mut HashMap<String, (u32, Action)>,
+    species: String,
+) -> Option<Msg> {
+    if let Some((policy_id, _)) = site_policies.remove(&species) {
+        Some(Msg::DeletePolicy(Policy { policy: policy_id }))
+    } else {
+        None
+    }
 }

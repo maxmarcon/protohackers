@@ -223,8 +223,8 @@ impl Decodable for TargetPopulations {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct CreatePolicy {
-    species: String,
-    action: Action,
+    pub species: String,
+    pub action: Action,
 }
 
 impl Decodable for CreatePolicy {
