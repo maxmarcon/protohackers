@@ -13,7 +13,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::tcp::ReadHalf;
 use tokio::net::TcpStream;
-use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::broadcast::Sender;
 
 fn main() {
     let args = CliArgs::parse();
@@ -32,7 +32,6 @@ fn main() {
         let last_client_id = last_client_id.clone();
         let last_job_id = last_job_id.clone();
         let sender = sender.clone();
-        let receiver = sender.subscribe();
         Box::pin(async {
             handle_stream(
                 tcpstream,
@@ -41,7 +40,6 @@ fn main() {
                 last_client_id,
                 last_job_id,
                 sender,
-                receiver,
             )
             .await
         })
@@ -74,7 +72,6 @@ async fn handle_stream(
     last_client_id: Arc<Mutex<u32>>,
     last_job_id: Arc<Mutex<u32>>,
     sender: Sender<(u32, Job)>,
-    receiver: Receiver<(u32, Job)>,
 ) -> io::Result<()> {
     let my_client_id = {
         let mut id = last_client_id.lock().unwrap();
@@ -89,7 +86,6 @@ async fn handle_stream(
         &job_state,
         last_job_id,
         &sender,
-        receiver,
     )
     .await;
 
@@ -265,12 +261,13 @@ async fn processing_loop(
     job_state: &Arc<RwLock<HashMap<u32, JobState>>>,
     last_job_id: Arc<Mutex<u32>>,
     sender: &Sender<(u32, Job)>,
-    mut receiver: Receiver<(u32, Job)>,
 ) -> io::Result<()> {
     let (tcpreader, mut tcpwriter) = tcpstream.split();
 
     let incoming_messages = message_stream(tcpreader);
     pin_mut!(incoming_messages);
+
+    let mut receiver = sender.subscribe();
     loop {
         tokio::select! {
             message = incoming_messages.next() => {

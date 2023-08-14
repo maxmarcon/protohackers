@@ -10,7 +10,7 @@ use std::io;
 use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufWriter};
 use tokio::io::{AsyncReadExt, BufReader};
-use tokio::net::tcp::{WriteHalf,ReadHalf};
+use tokio::net::tcp::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::pin;
 use tokio::sync::broadcast::{Receiver, Sender};
@@ -214,10 +214,7 @@ async fn process_site_visit(
     writer: &BufWriter<WriteHalf<'_>>,
 ) -> io::Result<VecDeque<Expected>> {
     let site_policy = site_policy.write().unwrap();
-    for population in site_visit {
-        
-    }
-    
-    
+    for population in site_visit {}
+
     Ok(VecDeque::new())
 }

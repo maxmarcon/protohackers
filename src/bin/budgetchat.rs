@@ -10,7 +10,6 @@ use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::{RecvError, SendError};
-use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::Sender;
 use tokio::sync::{broadcast, Mutex};
 
@@ -24,10 +23,9 @@ fn main() {
     let handler: Arc<_> = {
         Arc::new(move |tcp_stream| -> BoxFuture<'static, io::Result<()>> {
             let sender = sender.clone();
-            let receiver = sender.subscribe();
             let users = users.clone();
             Box::pin(async {
-                handle_stream(tcp_stream, sender, receiver, users)
+                handle_stream(tcp_stream, sender, users)
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::Other, e.to_string()))
             })
@@ -121,11 +119,11 @@ impl Display for Error {
 async fn handle_stream(
     mut tcp_stream: TcpStream,
     sender: Sender<ChatMsg>,
-    mut receiver: Receiver<ChatMsg>,
     users: Arc<Mutex<HashSet<String>>>,
 ) -> Result<()> {
     let mut buffer = Vec::new();
     let mut user_name = None;
+    let mut receiver = sender.subscribe();
     tcp_stream.write_all(b"Hello, what's your name?\n").await?;
 
     loop {

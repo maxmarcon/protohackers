@@ -21,7 +21,7 @@ use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
-use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::broadcast::Sender;
 use tokio::time;
 use tokio::time::Interval;
 
@@ -126,7 +126,6 @@ fn main() {
         let readings = readings.clone();
         let dispatchers = dispatchers.clone();
         let sender = sender.clone();
-        let receiver = sender.subscribe();
         let dispacher_id = dispatcher_id.clone();
         let car_tickets = car_tickets.clone();
         Box::pin(async {
@@ -137,7 +136,6 @@ fn main() {
                 dispatchers,
                 car_tickets,
                 sender,
-                receiver,
             )
             .await
         })
@@ -155,7 +153,6 @@ async fn handle_connection(
     dispatchers: Arc<Mutex<DispatcherMap>>,
     car_tickets: Arc<Mutex<HashMap<String, HashSet<u32>>>>,
     sender: Sender<event::Event>,
-    receiver: Receiver<event::Event>,
 ) -> io::Result<()> {
     let mut me = ClientType::Unknown;
 
@@ -170,7 +167,6 @@ async fn handle_connection(
         &dispatchers,
         car_tickets,
         sender,
-        receiver,
     )
     .await;
 
@@ -195,8 +191,7 @@ async fn processing_loop(
     dispatcher_id: Arc<Mutex<u16>>,
     dispatchers: &Arc<Mutex<DispatcherMap>>,
     car_tickets: Arc<Mutex<HashMap<String, HashSet<u32>>>>,
-    mut sender: Sender<event::Event>,
-    mut receiver: Receiver<event::Event>,
+    mut sender: Sender<Event>,
 ) -> io::Result<()> {
     let client_messages = message_stream(&mut tcp_reader);
     pin_mut!(client_messages);
@@ -205,6 +200,7 @@ async fn processing_loop(
 
     // ticket for roads with no dispatchers - waiting to be delivered when a dispatcher connects;
     let mut ticket_backlog: Vec<msg::Ticket> = Vec::new();
+    let mut receiver = sender.subscribe();
 
     loop {
         tokio::select! {
