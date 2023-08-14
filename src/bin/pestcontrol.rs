@@ -198,8 +198,7 @@ async fn authority_client(
                     }
                 }
             },
-            obs = receiver.recv(), if expected_next.is_none() => {
-                let (site_visit_site, site_visit_map) = obs.expect("WARNING: failed to receive message");
+            Ok((site_visit_site, site_visit_map)) = receiver.recv(), if expected_next.is_none() => {
                 if site_visit_site == site {
                     let messages = process_site_visit(site, site_visit_map, &site_policy,  &target_populations);
                     for message in messages {
